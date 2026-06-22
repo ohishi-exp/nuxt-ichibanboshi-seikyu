@@ -23,4 +23,11 @@ jobs:
       project_type: 'worker'
       typecheck_command: 'npx tsc --noEmit'
       has_deploy: false
-    secrets: inherit
+    # cross-org caller (ohishi-exp → ippoan/ci-workflows) では `secrets: inherit`
+    # が効かない (inherit は同一 org/enterprise のみ転送)。内蔵 auto-merge が
+    # App token を mint するため CI_APP_* を明示渡しする。workflow file を触る
+    # PR の merge には TAG_RELEASE_PAT も要る。Refs ippoan/ci-workflows#125。
+    secrets:
+      CI_APP_ID: ${{ secrets.CI_APP_ID }}
+      CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
+      TAG_RELEASE_PAT: ${{ secrets.TAG_RELEASE_PAT }}
