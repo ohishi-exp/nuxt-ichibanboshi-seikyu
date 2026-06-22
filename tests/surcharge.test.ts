@@ -32,6 +32,12 @@ const sample: MeisaiRow[] = [
 
 describe('computeSurcharge — #4 受入条件 (サンプル4行)', () => {
   const summary = computeSurcharge(sample, masters)
+  // noUncheckedIndexedAccess 配下では results[i] が T | undefined になる。
+  // サンプル 4 行は必ず存在するので非 null 表明で受ける。
+  const r0 = summary.results[0]!
+  const r1 = summary.results[1]!
+  const r2 = summary.results[2]!
+  const r3 = summary.results[3]!
 
   it('計上合計 = 1,695', () => {
     expect(summary.total).toBe(1695)
@@ -42,28 +48,28 @@ describe('computeSurcharge — #4 受入条件 (サンプル4行)', () => {
   })
 
   it('行1 = 1,695 で計上 (ok)', () => {
-    expect(summary.results[0].status).toBe('ok')
-    expect(summary.results[0].amount).toBe(1695)
-    expect(summary.results[0].priceDiff).toBe(30)
-    expect(summary.results[0].km).toBe(226)
-    expect(summary.results[0].efficiency).toBe(4.0)
+    expect(r0.status).toBe('ok')
+    expect(r0.amount).toBe(1695)
+    expect(r0.priceDiff).toBe(30)
+    expect(r0.km).toBe(226)
+    expect(r0.efficiency).toBe(4.0)
   })
 
   it('行2 = 同県 km=0 → 額0 (ok)', () => {
-    expect(summary.results[1].status).toBe('ok')
-    expect(summary.results[1].amount).toBe(0)
-    expect(summary.results[1].km).toBe(0)
+    expect(r1.status).toBe('ok')
+    expect(r1.amount).toBe(0)
+    expect(r1.km).toBe(0)
   })
 
   it('行3 = 車種00/距離未登録 → 警告 (未計上)', () => {
-    expect(summary.results[2].status).toBe('warning')
-    expect(summary.results[2].amount).toBe(0)
-    expect(summary.results[2].warning).toBeDefined()
+    expect(r2.status).toBe('warning')
+    expect(r2.amount).toBe(0)
+    expect(r2.warning).toBeDefined()
   })
 
   it('行4 = 県未マップ(?) → 距離未取得 警告', () => {
-    expect(summary.results[3].status).toBe('warning')
-    expect(summary.results[3].warning).toContain('距離未取得')
+    expect(r3.status).toBe('warning')
+    expect(r3.warning).toContain('距離未取得')
   })
 })
 
