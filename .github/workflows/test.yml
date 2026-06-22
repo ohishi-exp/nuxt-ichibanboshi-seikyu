@@ -3,11 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
-# frontend-ci.yml は内蔵の secret-verify (nested) が parse 時に id-token: write を
-# 要求するため、skip される run でも宣言必須 (Option A: top-level)。
+# frontend-ci.yml は内蔵 secret-verify が parse 時に id-token: write を要求するため
+# skip される run でも宣言必須 (Option A: top-level)。
 permissions:
   contents: write
   pull-requests: write
@@ -18,16 +19,20 @@ jobs:
   ci:
     uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
     with:
-      # 現状は計算エンジン (pure TS) のみ。Nuxt 確認 UI (#5) 追加時に
-      # project_type: 'nuxt' へ切替え、typecheck_command を外す。
-      project_type: 'worker'
-      typecheck_command: 'npx tsc --noEmit'
-      has_deploy: false
-    # cross-org caller (ohishi-exp → ippoan/ci-workflows) では `secrets: inherit`
-    # が効かない (inherit は同一 org/enterprise のみ転送)。内蔵 auto-merge が
-    # App token を mint するため CI_APP_* を明示渡しする。workflow file を触る
-    # PR の merge には TAG_RELEASE_PAT も要る。Refs ippoan/ci-workflows#125。
+      project_type: 'nuxt'
+      # @ippoan/auth-client は GitHub Packages publish が version gate (auth-worker
+      # v* tag)。lockfile が旧版を pin していても manifest に追従させる + CCoW から
+      # lockfile を再生成できないため npm install を明示。
+      install_command: 'npm install'
+      post_install_script: 'npx nuxt prepare'
+      use_auth_client_dev: true
+      # single-env (staging = prod): staging / release とも同一 wrangler.toml を deploy。
+      deploy_staging_script: 'npm run build && npx wrangler deploy'
+      deploy_release_script: 'npm run build && npx wrangler deploy'
+    # cross-org caller (ohishi-exp → ippoan/ci-workflows) は secrets: inherit が
+    # 効かないため明示渡し (Refs ippoan/ci-workflows#125)。
     secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CI_APP_ID: ${{ secrets.CI_APP_ID }}
       CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
       TAG_RELEASE_PAT: ${{ secrets.TAG_RELEASE_PAT }}
