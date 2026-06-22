@@ -1,0 +1,18 @@
+name = "nuxt-ichibanboshi-seikyu"
+account_id = "24b45709d060d957340180e995f0d373"
+main = "./.output/server/index.mjs"
+compatibility_date = "2025-07-15"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = ".output/public"
+
+# single-env (staging = prod)。PR を上げると CI がこの live worker に deploy する。
+[[routes]]
+pattern = "ichibanboshi-seikyu.ippoan.org"
+custom_domain = true
+
+[vars]
+# tenant 制限 (大石運輸倉庫のみ) は auth-worker 側 (APP_TENANT_ACL) に集約。
+# worker は tenant_id を持たない。
+NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
