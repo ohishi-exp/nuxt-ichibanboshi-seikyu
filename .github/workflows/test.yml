@@ -1,4 +1,4 @@
-name: test
+name: CI
 
 on:
   push:
@@ -6,20 +6,21 @@ on:
   pull_request:
     branches: [main]
 
+# frontend-ci.yml は内蔵の secret-verify (nested) が parse 時に id-token: write を
+# 要求するため、skip される run でも宣言必須 (Option A: top-level)。
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+  packages: read
+  id-token: write
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: install
-        run: npm install --no-audit --no-fund
-      - name: typecheck
-        run: npm run typecheck
-      - name: test
-        run: npm test
+  ci:
+    uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
+    with:
+      # 現状は計算エンジン (pure TS) のみ。Nuxt 確認 UI (#5) 追加時に
+      # project_type: 'nuxt' へ切替え、typecheck_command を外す。
+      project_type: 'worker'
+      typecheck_command: 'npx tsc --noEmit'
+      has_deploy: false
+    secrets: inherit
