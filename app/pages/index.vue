@@ -296,7 +296,8 @@ async function loadDieselView() {
   dieselViewMsg.value = ''
   try {
     const csv = await $fetch<string>('/api/diesel-price', { responseType: 'text' })
-    dieselEntries.value = parseDieselPriceCsv(csv).entries
+    // 表示は年月の降順 (新しい月が上)。保存/削除は month キー単位なので並び順は不問。
+    dieselEntries.value = parseDieselPriceCsv(csv).entries.sort((a, b) => b.month.localeCompare(a.month))
     dieselViewState.value = 'done'
     if (dieselEntries.value.length === 0) dieselViewMsg.value = '登録なし (まだ登録されていません)'
   } catch (err: unknown) {
@@ -800,6 +801,12 @@ watch(
           <li v-if="dieselUploadWarnings.length > 20">…他 {{ dieselUploadWarnings.length - 20 }} 件</li>
         </ul>
 
+        <details class="advanced">
+          <summary>詳細 / 開発者向け (probe・手動取込・cron 手動実行)</summary>
+          <p class="lead-note adv-note">
+            通常は週次 cron が自動で取込・通知します。以下は到達確認や手動取込など保守用です。
+          </p>
+
         <h3 class="view-title">経産省から自動取得 (probe)</h3>
         <p class="lead-note">
           資源エネルギー庁の公表ページ/ファイルへ Worker から到達できるか確認します
@@ -865,6 +872,7 @@ watch(
         <p v-if="cronState === 'running'" class="status">cron 実行中… (重複判定 → 取込 → 通知)</p>
         <p v-else-if="cronState === 'done'" class="status ok">{{ cronMsg }}</p>
         <p v-else-if="cronState === 'error'" class="status err">{{ cronMsg }}</p>
+        </details>
 
         <h3 class="view-title">新規登録</h3>
         <form class="row-form" @submit.prevent="onAddDiesel">
@@ -1380,6 +1388,24 @@ nav {
   font-size: 0.85rem;
   color: #6b7280;
   margin: 0.25rem 0 1rem;
+}
+/* 保守用 (probe / 手動取込 / cron 手動実行) は既定で折り畳む */
+.advanced {
+  margin-top: 1rem;
+  border-top: 1px dashed #e5e7eb;
+  padding-top: 0.75rem;
+}
+.advanced > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #6b7280;
+  user-select: none;
+}
+.advanced > summary:hover {
+  color: #374151;
+}
+.adv-note {
+  margin-top: 0.75rem;
 }
 .notification-doc {
   border: 1px solid #e5e7eb;
