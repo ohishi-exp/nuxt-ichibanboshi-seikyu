@@ -4,6 +4,25 @@ export default defineNuxtConfig({
   // SPA。auth-worker JWT を fragment/storage で復元して gate するため SSR は使わない。
   ssr: false,
 
+  // PWA (インストール可能 + オフラインのアプリシェル)。manifest / icon / sw は public/、
+  // Service Worker 登録は app/plugins/pwa.client.ts。
+  app: {
+    head: {
+      link: [
+        { rel: 'manifest', href: '/manifest.webmanifest' },
+        { rel: 'icon', type: 'image/svg+xml', href: '/icon.svg' },
+        { rel: 'apple-touch-icon', href: '/icon.svg' },
+      ],
+      meta: [
+        { name: 'theme-color', content: '#0b1f3a' },
+        { name: 'mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
+        { name: 'apple-mobile-web-app-title', content: '一番星請求' },
+      ],
+    },
+  },
+
   runtimeConfig: {
     public: {
       // auth-worker (JWT 発行 / refresh)。tenant 制限は auth-worker 側
