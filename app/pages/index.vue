@@ -9,6 +9,7 @@ import {
   type SurchargeResult,
 } from '../../src/surcharge'
 import { mapToMeisaiRows, type IchibanSurchargeRow } from '../../src/surcharge-review'
+import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
 import {
   generateIncrementTable,
   TIME_BASED_DISTANCES,
@@ -23,14 +24,24 @@ const config = useRuntimeConfig()
 const authWorkerUrl = config.public.authWorkerUrl as string
 
 // --- サイドバー (nuxt_dtako_logs ライクの左ナビ形式) ---
-type Section = 'distance' | 'fuel' | 'diesel' | 'notification' | 'review' | 'settings'
+type Section =
+  | 'distance'
+  | 'fuel'
+  | 'diesel'
+  | 'surchargeCustomers'
+  | 'notification'
+  | 'review'
+  | 'shimebi'
+  | 'settings'
 const active = ref<Section>('distance')
 const nav: { key: Section; label: string; group: string }[] = [
   { key: 'distance', label: '県庁間距離マスタ', group: 'マスタ' },
   { key: 'fuel', label: '燃費マスタ', group: 'マスタ' },
   { key: 'diesel', label: '軽油価格マスタ', group: 'マスタ' },
+  { key: 'surchargeCustomers', label: 'サーチャージマスタ', group: 'マスタ' },
   { key: 'notification', label: '届出書', group: '帳票' },
   { key: 'review', label: '明細・集計', group: '確認' },
+  { key: 'shimebi', label: '締め日別 取引先', group: '確認' },
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
 ]
 const groups = [...new Set(nav.map((n) => n.group))]
@@ -624,6 +635,149 @@ async function onMigrate() {
   }
 }
 
+// --- サーチャージマスタ (サーチャージ対象として登録する取引先)。Refs #11 ---
+interface SurchargeCustomerView {
+  customerCode: string
+  customerName: string
+}
+const surchargeCustomers = ref<SurchargeCustomerView[]>([])
+const scState = ref<ViewState>('idle')
+const scMsg = ref('')
+const scFormCode = ref('')
+const scFormName = ref('')
+// 締め日別画面と共有する「登録済み取引先コード」集合
+const registeredCodes = ref<Set<string>>(new Set())
+
+async function loadSurchargeCustomers() {
+  scState.value = 'loading'
+  scMsg.value = ''
+  try {
+    const res = await $fetch<{ customers: SurchargeCustomerView[] }>('/api/surcharge-customers')
+    surchargeCustomers.value = res.customers
+    registeredCodes.value = new Set(res.customers.map((c) => c.customerCode))
+    scState.value = 'done'
+    if (res.customers.length === 0) scMsg.value = '登録なし'
+  } catch (err: unknown) {
+    scState.value = 'error'
+    scMsg.value = err instanceof Error ? err.message : '読込に失敗しました'
+  }
+}
+async function onAddSurchargeCustomer() {
+  const code = scFormCode.value.trim()
+  if (!code) return
+  try {
+    await $fetch('/api/surcharge-customers', {
+      method: 'POST',
+      body: { customerCode: code, customerName: scFormName.value },
+    })
+    scFormCode.value = ''
+    scFormName.value = ''
+    await loadSurchargeCustomers()
+  } catch (err: unknown) {
+    scState.value = 'error'
+    scMsg.value = err instanceof Error ? err.message : '追加に失敗しました'
+  }
+}
+async function onDeleteSurchargeCustomer(code: string) {
+  try {
+    await $fetch('/api/surcharge-customers', { method: 'DELETE', query: { code } })
+    await loadSurchargeCustomers()
+  } catch (err: unknown) {
+    scState.value = 'error'
+    scMsg.value = err instanceof Error ? err.message : '削除に失敗しました'
+  }
+}
+
+// --- 締め日別 取引先 (締め日 = 請求日/入金予定の日付)。Refs #11 ---
+function shiftMonth(ym: string, delta: number): string {
+  const [y, m] = ym.split('-').map(Number)
+  const d = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1 + delta, 1))
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+}
+const shimebiDate = ref('') // YYYY-MM-DD (締め日 = 請求日)
+const shimebiState = ref<ViewState>('idle')
+const shimebiMsg = ref('')
+const shimebiRows = ref<ShimebiCustomerRow[]>([])
+async function onRunShimebi() {
+  const date = shimebiDate.value
+  if (!date) {
+    shimebiState.value = 'error'
+    shimebiMsg.value = '締め日 (請求日) を入力してください'
+    return
+  }
+  shimebiState.value = 'loading'
+  shimebiMsg.value = ''
+  shimebiRows.value = []
+  try {
+    // 一番星 from/to は売上月フィルタ。請求日(入金予定)はその後の月になり得るので、
+    // 売上月を広めに取得し、client 側で「請求日 === 締め日」に絞る。
+    const ym = date.slice(0, 7)
+    const base = await $fetch<{
+      rows: IchibanSurchargeRow[]
+      reason?: string
+      upstreamStatus?: number
+    }>('/api/surcharge-base', {
+      query: { from: shiftMonth(ym, -2), to: shiftMonth(ym, 1), kind: 'billing_only', limit: 10000 },
+    })
+    if (base.reason) {
+      shimebiState.value = 'error'
+      shimebiMsg.value =
+        base.reason === 'upstream'
+          ? `一番星が ${base.upstreamStatus} を返しました`
+          : base.reason === 'connect_failed'
+            ? '一番星への接続に失敗しました'
+            : '一番星連携が未設定です'
+      return
+    }
+    const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
+      $fetch<string>('/api/distance', { responseType: 'text' }),
+      $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
+      $fetch<string>('/api/diesel-price', { responseType: 'text' }),
+      $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings'),
+    ])
+    await loadSurchargeCustomers()
+    const masters: SurchargeMasters = {
+      basePrice: settings.basePrice,
+      priceStep: settings.priceStep,
+      monthlyDieselPrice: toMonthlyPriceMap(parseDieselPriceCsv(dieselCsv).entries),
+      fuelEfficiency: toEfficiencyLookup(parseFuelEfficiencyCsv(fuelCsv).entries),
+      distanceKm: parseDistanceCsv(distCsv).master.distanceKm,
+    }
+    const summary = computeSurcharge(mapToMeisaiRows(base.rows), masters)
+    // 締め日 (請求日) が一致する行のみ集計
+    const onDate = summary.results.filter((r) => (r.row.seikyuDate || '').slice(0, 10) === date)
+    shimebiRows.value = aggregateByCustomer(onDate, (code) => registeredCodes.value.has(code))
+    shimebiState.value = 'done'
+    if (shimebiRows.value.length === 0) {
+      shimebiMsg.value = 'この締め日 (請求日) に請求のある取引先がありません'
+    }
+  } catch (err: unknown) {
+    shimebiState.value = 'error'
+    shimebiMsg.value = err instanceof Error ? err.message : '集計に失敗しました'
+  }
+}
+async function onToggleShimebiRegister(row: ShimebiCustomerRow) {
+  try {
+    if (row.registered) {
+      await $fetch('/api/surcharge-customers', {
+        method: 'DELETE',
+        query: { code: row.customerCode },
+      })
+      registeredCodes.value.delete(row.customerCode)
+      row.registered = false
+    } else {
+      await $fetch('/api/surcharge-customers', {
+        method: 'POST',
+        body: { customerCode: row.customerCode, customerName: row.customerName },
+      })
+      registeredCodes.value.add(row.customerCode)
+      row.registered = true
+    }
+  } catch (err: unknown) {
+    shimebiMsg.value = err instanceof Error ? err.message : '登録更新に失敗しました'
+  }
+}
+
 // セクションを開いた時に未読込なら現在の登録内容を自動表示する。
 watch(
   active,
@@ -634,6 +788,8 @@ watch(
       if (!vehiclesLoaded.value) void loadVehicles()
     }
     if (sec === 'diesel' && dieselViewState.value === 'idle') void loadDieselView()
+    if (sec === 'surchargeCustomers' && scState.value === 'idle') void loadSurchargeCustomers()
+    if (sec === 'shimebi' && scState.value === 'idle') void loadSurchargeCustomers()
     // 届出書も燃費マスタ現在値を載せるため fuel を読む + サーチャージ設定を読む
     if (sec === 'notification') {
       if (fuelViewState.value === 'idle') void loadFuelView()
@@ -1007,6 +1163,47 @@ watch(
         </table>
       </section>
 
+      <!-- サーチャージマスタ (サーチャージ対象として登録する取引先) -->
+      <section v-else-if="active === 'surchargeCustomers'" class="card">
+        <h2>サーチャージマスタ (対象取引先)</h2>
+        <p class="lead-note">
+          燃料サーチャージの対象として登録する取引先を管理します。締め日別の確認画面でも
+          その場で追加/削除できます。取引先コードで一意。
+        </p>
+
+        <h3 class="view-title">新規登録</h3>
+        <form class="row-form" @submit.prevent="onAddSurchargeCustomer">
+          <label>
+            取引先コード
+            <input v-model="scFormCode" type="text" required />
+          </label>
+          <label>
+            取引先名 (任意)
+            <input v-model="scFormName" type="text" />
+          </label>
+          <button class="btn" type="submit" :disabled="scState === 'loading'">追加</button>
+        </form>
+
+        <h3 class="view-title">登録済みの取引先</h3>
+        <p v-if="scState === 'loading'" class="status">読込中…</p>
+        <p v-else-if="scState === 'error'" class="status err">{{ scMsg }}</p>
+        <p v-else-if="scMsg" class="status">{{ scMsg }}</p>
+        <table v-if="surchargeCustomers.length" class="grid">
+          <thead>
+            <tr><th>取引先コード</th><th>取引先名</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in surchargeCustomers" :key="c.customerCode">
+              <td>{{ c.customerCode }}</td>
+              <td>{{ c.customerName }}</td>
+              <td class="row-ops">
+                <button class="link-del" @click="onDeleteSurchargeCustomer(c.customerCode)">削除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       <!-- 届出書 (届出用紙)。印刷 → PDF 保存 -->
       <section v-else-if="active === 'notification'" class="card">
         <div class="doc-actions no-print">
@@ -1185,6 +1382,68 @@ watch(
               …他 {{ reviewWarnings.length - 200 }} 件
             </p>
           </template>
+        </template>
+      </section>
+
+      <!-- 締め日別 取引先 (締め日 = 請求日)。金額/サーチャージ/登録有無/差額 + その場で登録 -->
+      <section v-else-if="active === 'shimebi'" class="card">
+        <h2>締め日別 取引先</h2>
+        <p class="lead-note">
+          締め日 (請求日 / 入金予定日) を指定すると、その締め日に請求のある取引先を取引先コード順に
+          一覧します。各取引先の運賃合計・計算サーチャージ・マスタ登録有無・差額を表示し、その場で
+          サーチャージ対象の登録/解除ができます。<br />
+          差額 = 実請求との差。一番星は燃料サーチャージを別建てで返さないため、差額 = 計算サーチャージ
+          (= 現状の請求に未計上で今後請求すべき額) です。
+        </p>
+        <div class="actions">
+          <label class="inline-label">
+            締め日 (請求日)
+            <input v-model="shimebiDate" type="date" required />
+          </label>
+          <button class="btn" :disabled="shimebiState === 'loading'" @click="onRunShimebi">
+            表示
+          </button>
+        </div>
+        <p v-if="shimebiState === 'loading'" class="status">集計中…</p>
+        <p v-else-if="shimebiState === 'error'" class="status err">{{ shimebiMsg }}</p>
+        <template v-if="shimebiState === 'done'">
+          <p v-if="shimebiMsg" class="status">{{ shimebiMsg }}</p>
+          <table v-if="shimebiRows.length" class="grid">
+            <thead>
+              <tr>
+                <th>取引先コード</th>
+                <th>取引先名</th>
+                <th>金額 (運賃)</th>
+                <th>サーチャージ金額</th>
+                <th>登録</th>
+                <th>差額</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in shimebiRows" :key="r.customerCode">
+                <td>{{ r.customerCode }}</td>
+                <td>{{ r.customerName }}</td>
+                <td class="num">{{ r.fareTotal.toLocaleString() }}</td>
+                <td class="num">{{ r.surchargeTotal.toLocaleString() }}</td>
+                <td>
+                  <span :class="r.registered ? 'badge-on' : 'badge-off'">
+                    {{ r.registered ? '登録済' : '未登録' }}
+                  </span>
+                  <span v-if="r.warningCount" class="warn-note">（未計上 {{ r.warningCount }}）</span>
+                </td>
+                <td class="num">{{ r.diff.toLocaleString() }}</td>
+                <td class="row-ops">
+                  <button
+                    :class="r.registered ? 'link-del' : 'link-save'"
+                    @click="onToggleShimebiRegister(r)"
+                  >
+                    {{ r.registered ? '解除' : '登録' }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </template>
       </section>
 
@@ -1517,6 +1776,28 @@ nav {
 }
 .adv-note {
   margin-top: 0.75rem;
+}
+/* サーチャージマスタ登録バッジ (締め日別画面) */
+.badge-on {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.78rem;
+  background: #dcfce7;
+  color: #166534;
+}
+.badge-off {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.78rem;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.warn-note {
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  color: #b45309;
 }
 /* 週次内訳セル: 調査日:価格 を折り返しチップ表示 */
 .weekly-cell {
