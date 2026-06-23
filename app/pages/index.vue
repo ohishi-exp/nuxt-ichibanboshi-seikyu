@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { parseDistanceCsv, distanceKey, type DistanceMaster } from '../../src/distance'
+import { parseFuelEfficiencyCsv, type FuelEfficiencyEntry } from '../../src/fuel-efficiency'
+
 // 認証 gate は app/plugins/auth.client.ts (initAuthSession) が担う。
 // 未認証ならこのページに到達する前に auth-worker ログインへ redirect される。
 // = ここが描画される時点で「大石運輸倉庫テナントで認証済み」。
@@ -15,6 +18,54 @@ const nav: { key: Section; label: string; group: string }[] = [
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
 ]
 const groups = [...new Set(nav.map((n) => n.group))]
+
+// --- 登録内容の表示 (アップロード結果の確認用)。GET CSV → 既存 parser で復元 ---
+type ViewState = 'idle' | 'loading' | 'done' | 'error'
+
+const distMaster = ref<DistanceMaster | null>(null)
+const distViewState = ref<ViewState>('idle')
+const distViewMsg = ref('')
+
+async function loadDistanceView() {
+  distViewState.value = 'loading'
+  distViewMsg.value = ''
+  try {
+    const csv = await $fetch<string>('/api/distance', { responseType: 'text' })
+    const { master } = parseDistanceCsv(csv)
+    distMaster.value = master
+    distViewState.value = 'done'
+    if (master.prefs.length === 0) distViewMsg.value = '登録なし (まだアップロードされていません)'
+  } catch (err: unknown) {
+    distViewState.value = 'error'
+    distViewMsg.value = err instanceof Error ? err.message : '読込に失敗しました'
+  }
+}
+
+const fuelEntries = ref<FuelEfficiencyEntry[]>([])
+const fuelViewState = ref<ViewState>('idle')
+const fuelViewMsg = ref('')
+
+async function loadFuelView() {
+  fuelViewState.value = 'loading'
+  fuelViewMsg.value = ''
+  try {
+    const csv = await $fetch<string>('/api/fuel-efficiency', { responseType: 'text' })
+    const { entries } = parseFuelEfficiencyCsv(csv)
+    fuelEntries.value = entries
+    fuelViewState.value = 'done'
+    if (entries.length === 0) fuelViewMsg.value = '登録なし (まだアップロードされていません)'
+  } catch (err: unknown) {
+    fuelViewState.value = 'error'
+    fuelViewMsg.value = err instanceof Error ? err.message : '読込に失敗しました'
+  }
+}
+
+// 距離セルの取り出し (noUncheckedIndexedAccess 対応)。自県は 0、未登録は空。
+function distCell(from: string, to: string): string {
+  if (from === to) return '0'
+  const v = distMaster.value?.distanceKm[distanceKey(from, to)]
+  return v === undefined ? '' : String(v)
+}
 
 // --- 県庁間距離マスタ CSV upload (距離制 input)。Refs #11 ---
 type UploadState = 'idle' | 'uploading' | 'done' | 'error'
@@ -44,6 +95,7 @@ async function onDistanceUpload(e: Event) {
     distUploadState.value = 'done'
     distUploadMsg.value = `取込完了: ${res.prefectures} 県 / ${res.distances} 距離`
     distUploadWarnings.value = res.warnings ?? []
+    await loadDistanceView() // 取込結果を即表示
   } catch (err: unknown) {
     distUploadState.value = 'error'
     distUploadMsg.value = err instanceof Error ? err.message : '取込に失敗しました'
@@ -77,6 +129,7 @@ async function onFuelUpload(e: Event) {
     fuelUploadState.value = 'done'
     fuelUploadMsg.value = `取込完了: ${res.entries} 件`
     fuelUploadWarnings.value = res.warnings ?? []
+    await loadFuelView() // 取込結果を即表示
   } catch (err: unknown) {
     fuelUploadState.value = 'error'
     fuelUploadMsg.value = err instanceof Error ? err.message : '取込に失敗しました'
@@ -104,6 +157,16 @@ async function onMigrate() {
     migrateMsg.value = err instanceof Error ? err.message : 'スキーマ適用に失敗しました'
   }
 }
+
+// セクションを開いた時に未読込なら現在の登録内容を自動表示する。
+watch(
+  active,
+  (sec) => {
+    if (sec === 'distance' && distViewState.value === 'idle') void loadDistanceView()
+    if (sec === 'fuel' && fuelViewState.value === 'idle') void loadFuelView()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -147,6 +210,9 @@ async function onMigrate() {
             CSV アップロード
             <input type="file" accept=".csv,text/csv" @change="onDistanceUpload" />
           </label>
+          <button class="btn" :disabled="distViewState === 'loading'" @click="loadDistanceView">
+            表示を更新
+          </button>
         </div>
         <p v-if="distUploadState === 'uploading'" class="status">取込中…</p>
         <p v-else-if="distUploadState === 'done'" class="status ok">{{ distUploadMsg }}</p>
@@ -155,6 +221,31 @@ async function onMigrate() {
           <li v-for="(w, i) in distUploadWarnings.slice(0, 20)" :key="i">{{ w }}</li>
           <li v-if="distUploadWarnings.length > 20">…他 {{ distUploadWarnings.length - 20 }} 件</li>
         </ul>
+
+        <!-- 現在の登録内容 -->
+        <h3 class="view-title">現在の登録内容</h3>
+        <p v-if="distViewState === 'loading'" class="status">読込中…</p>
+        <p v-else-if="distViewState === 'error'" class="status err">{{ distViewMsg }}</p>
+        <p v-else-if="distViewMsg" class="status">{{ distViewMsg }}</p>
+        <template v-if="distViewState === 'done' && distMaster && distMaster.prefs.length">
+          <p class="summary">{{ distMaster.prefs.length }} 県 登録済み</p>
+          <div class="matrix-scroll">
+            <table class="matrix">
+              <thead>
+                <tr>
+                  <th class="corner">積地＼卸地</th>
+                  <th v-for="to in distMaster.prefs" :key="to">{{ to }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="from in distMaster.prefs" :key="from">
+                  <th class="rowhead">{{ from }}</th>
+                  <td v-for="to in distMaster.prefs" :key="to">{{ distCell(from, to) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
       </section>
 
       <!-- 燃費マスタ -->
@@ -171,6 +262,9 @@ async function onMigrate() {
             CSV アップロード
             <input type="file" accept=".csv,text/csv" @change="onFuelUpload" />
           </label>
+          <button class="btn" :disabled="fuelViewState === 'loading'" @click="loadFuelView">
+            表示を更新
+          </button>
         </div>
         <p v-if="fuelUploadState === 'uploading'" class="status">取込中…</p>
         <p v-else-if="fuelUploadState === 'done'" class="status ok">{{ fuelUploadMsg }}</p>
@@ -179,6 +273,32 @@ async function onMigrate() {
           <li v-for="(w, i) in fuelUploadWarnings.slice(0, 20)" :key="i">{{ w }}</li>
           <li v-if="fuelUploadWarnings.length > 20">…他 {{ fuelUploadWarnings.length - 20 }} 件</li>
         </ul>
+
+        <!-- 現在の登録内容 -->
+        <h3 class="view-title">現在の登録内容</h3>
+        <p v-if="fuelViewState === 'loading'" class="status">読込中…</p>
+        <p v-else-if="fuelViewState === 'error'" class="status err">{{ fuelViewMsg }}</p>
+        <p v-else-if="fuelViewMsg" class="status">{{ fuelViewMsg }}</p>
+        <table v-if="fuelViewState === 'done' && fuelEntries.length" class="grid">
+          <thead>
+            <tr>
+              <th>車種C</th>
+              <th>車種名</th>
+              <th>燃費 (km/L)</th>
+              <th>有効開始</th>
+              <th>有効終了</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(e, i) in fuelEntries" :key="i">
+              <td>{{ e.sharuC }}</td>
+              <td>{{ e.name }}</td>
+              <td class="num">{{ e.kmPerL }}</td>
+              <td>{{ e.validFrom }}</td>
+              <td>{{ e.validTo ?? '（無期限）' }}</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <!-- 確認 UI (placeholder) -->
@@ -345,6 +465,68 @@ nav {
   padding-left: 1.25rem;
   font-size: 0.8rem;
   color: #b45309;
+}
+.view-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #e5e7eb;
+}
+.summary {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: #374151;
+}
+.grid {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.grid th,
+.grid td {
+  border: 1px solid #e5e7eb;
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+}
+.grid th {
+  background: #f3f4f6;
+  font-weight: 600;
+}
+.grid td.num {
+  text-align: right;
+}
+.matrix-scroll {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+}
+.matrix {
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+.matrix th,
+.matrix td {
+  border: 1px solid #e5e7eb;
+  padding: 0.2rem 0.35rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.matrix thead th {
+  position: sticky;
+  top: 0;
+  background: #f3f4f6;
+  z-index: 1;
+}
+.matrix th.rowhead,
+.matrix th.corner {
+  position: sticky;
+  left: 0;
+  background: #f3f4f6;
+  text-align: left;
+  z-index: 2;
+}
+.matrix th.corner {
+  z-index: 3;
 }
 @media (max-width: 640px) {
   .shell {

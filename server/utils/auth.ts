@@ -100,3 +100,25 @@ export async function requireAuth(event: H3Event): Promise<Record<string, unknow
   }
   return payload
 }
+
+/**
+ * JWT payload が管理者か (role === 'admin')。viewer / role 欠落は false。
+ * role claim は auth-worker / rust-alc-api のブラウザ JWT に top-level で乗る
+ * ('admin' | 'viewer'、auth-worker admin-users-html も同 claim を参照)。
+ */
+export function isAdminPayload(payload: Record<string, unknown>): boolean {
+  return payload.role === 'admin'
+}
+
+/**
+ * 管理者 (role === 'admin') だけを通す gate。requireAuth で署名検証した上で
+ * JWT の `role` claim を見る。admin 以外は 403。
+ * マスタの参照・更新は全て管理者限定 (= 大石運輸倉庫テナントの admin のみ)。
+ */
+export async function requireAdmin(event: H3Event): Promise<Record<string, unknown>> {
+  const payload = await requireAuth(event)
+  if (!isAdminPayload(payload)) {
+    throw createError({ statusCode: 403, statusMessage: '管理者権限が必要です' })
+  }
+  return payload
+}
