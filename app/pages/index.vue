@@ -652,7 +652,7 @@ const shimebiDetailName = computed(
 // 明細の表示方法 (下/右/モーダル/別タブ) を localStorage に保存して設定にする。
 type DetailMode = 'below' | 'right' | 'modal' | 'newtab'
 const DETAIL_MODE_KEY = 'ichibanboshi-seikyu:shimebi-detail-mode'
-const shimebiDetailMode = ref<DetailMode>('below')
+const shimebiDetailMode = ref<DetailMode>('modal')
 if (import.meta.client) {
   const saved = localStorage.getItem(DETAIL_MODE_KEY)
   if (saved === 'below' || saved === 'right' || saved === 'modal' || saved === 'newtab') {
@@ -1177,18 +1177,19 @@ watch(
         </p>
         <table v-else-if="dieselViewState === 'done'" class="grid">
           <thead>
-            <tr><th>年月</th><th>週次 全国平均 (調査日: 円/L)</th><th>月平均 (円/L)</th></tr>
+            <tr><th>調査日</th><th>軽油価格 (円/L)</th></tr>
           </thead>
           <tbody>
-            <tr v-for="m in dieselWeeklyByMonth" :key="m.month">
-              <td>{{ m.month }}</td>
-              <td>
-                <span v-for="w in m.weeks" :key="w.date" class="weekly-cell">
-                  {{ w.date.slice(5) }}: {{ w.price }}
-                </span>
-              </td>
-              <td class="num">{{ m.avg }}</td>
-            </tr>
+            <template v-for="m in dieselWeeklyByMonth" :key="m.month">
+              <tr v-for="w in m.weeks" :key="w.date">
+                <td>{{ w.date }}</td>
+                <td class="num">{{ w.price }}</td>
+              </tr>
+              <tr class="weekly-avg">
+                <td>{{ m.month }} 月平均</td>
+                <td class="num">{{ m.avg }}</td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </section>
@@ -1881,6 +1882,11 @@ nav {
   margin-bottom: 0.75rem;
 }
 /* 週次内訳セル: 調査日:価格 を折り返しチップ表示 */
+.weekly-avg td {
+  background: #eff6ff;
+  font-weight: 600;
+  border-top: 1px solid #bfdbfe;
+}
 .weekly-cell {
   display: inline-block;
   margin: 0.1rem 0.4rem 0.1rem 0;
