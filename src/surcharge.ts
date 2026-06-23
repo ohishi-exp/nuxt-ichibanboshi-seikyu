@@ -1,15 +1,20 @@
 // 燃料サーチャージ計算エンジン
 //
-// 確定ルール (Refs ohishi-exp/nuxt-ichibanboshi-seikyu#4):
-//   価格差         = max(0, 当月全国平均軽油 − 基準価格)        (0止め)
-//   行サーチャージ = round( 価格差 × 距離km ÷ 燃費km/L )        (係数1・1行1台・片道・最低額なし)
+// 確定ルール (Refs ohishi-exp/nuxt-ichibanboshi-seikyu#4 / 届出書方式 #11-C):
+//   上昇額         = 段階テーブル参照 (5 円刻みの代表価格 − 基準価格、中点 2.5 倍数)
+//   行サーチャージ = ceil( 上昇額 × 距離km ÷ 燃費km/L )         (円単位切り上げ・係数1・1行1台・片道・最低額なし)
 //   基準価格は全社共通、当月 = 売上年月日 の月
 //   集計           = 得意先C × 入金予定日(請求日)              (多締も自動分割)
 //   距離未取得 / 燃費未定義 / 当月価格なし → 未計上＋警告
 //
+// 段階テーブル (届出書 `条件設定シート` の正式方式、Refs #11):
+//   区間 (base + step·k, base + step·(k+1)] の上昇額 = step·k + step/2  (k = 0,1,2,…)
+//   軽油価格が基準価格以下なら廃止扱い → 上昇額 0。
+//   端数処理は円単位の切り上げ (ceil) — 官公庁提出の届出書に合わせる。
+//
 // 計算式に運賃 (unchin) は使わない (参考保持のみ)。
-// マスタ (基準価格・軽油価格・燃費・県庁間距離) は呼び出し側が注入する純粋関数として実装する
-// (実マスタの整備は #1 / #2、producer 連携は #3)。
+// マスタ (基準価格・刻み幅・軽油価格・燃費・県庁間距離) は呼び出し側が注入する純粋関数として
+// 実装する (実マスタの整備は #1 / #2、producer 連携は #3)。
 
 /** 運転日報明細 1 行 (producer = rust-ichibanboshi #3 の取得結果をマップしたもの) */
 export interface MeisaiRow {
@@ -34,6 +39,8 @@ export interface MeisaiRow {
 export interface SurchargeMasters {
   /** 基準燃料価格 (全社共通) */
   basePrice: number
+  /** 改定する刻み幅 (円/L)。届出書既定は 5。省略時 5 */
+  priceStep?: number
   /** "YYYY-MM" -> 当月全国平均軽油価格。無ければ当月価格なし → 警告 */
   monthlyDieselPrice: Record<string, number>
   /** 車種C -> 燃費 km/L。未定義 or 0 以下 → 警告 */
@@ -55,7 +62,8 @@ export interface SurchargeResult {
   status: SurchargeStatus
   /** status==='ok' 以外は 0 */
   amount: number
-  priceDiff?: number
+  /** 段階テーブル由来の燃料価格上昇額 (円/L)。基準価格以下なら 0 */
+  increment?: number
   km?: number
   efficiency?: number
   /** status==='warning' の理由 */
@@ -64,9 +72,28 @@ export interface SurchargeResult {
 
 const PREF_UNMAPPED = '?'
 
+/** 刻み幅の既定値 (届出書 `条件設定シート` の 5 円/L) */
+const DEFAULT_PRICE_STEP = 5
+
 /** 売上年月日 (YYYY-MM-DD) から当月キー (YYYY-MM) を取り出す */
 function monthKey(date: string): string {
   return date.slice(0, 7)
+}
+
+/**
+ * 段階テーブルの上昇額 (円/L) を返す。届出書 `条件設定シート` の正式方式。
+ *   区間 (base + step·k, base + step·(k+1)] → 上昇額 = step·k + step/2  (k = 0,1,2,…)
+ *   軽油価格が基準価格以下 → 廃止扱いで 0。
+ */
+export function surchargeIncrement(
+  monthlyPrice: number,
+  basePrice: number,
+  step: number = DEFAULT_PRICE_STEP,
+): number {
+  if (step <= 0) return 0
+  if (monthlyPrice <= basePrice) return 0
+  const k = Math.ceil((monthlyPrice - basePrice) / step) - 1
+  return step * k + step / 2
 }
 
 /** 県庁間距離を引く。未マップ県 → null (警告)、同県 → 0、対称参照あり */
@@ -119,9 +146,9 @@ export function computeRowSurcharge(
     }
   }
 
-  const priceDiff = Math.max(0, monthly - m.basePrice)
-  const amount = Math.round((priceDiff * km) / efficiency)
-  return { row, status: 'ok', amount, priceDiff, km, efficiency }
+  const increment = surchargeIncrement(monthly, m.basePrice, m.priceStep)
+  const amount = Math.ceil((increment * km) / efficiency)
+  return { row, status: 'ok', amount, increment, km, efficiency }
 }
 
 /** 得意先C × 入金予定日(請求日) の集計行 */

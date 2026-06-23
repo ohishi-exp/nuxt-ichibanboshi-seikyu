@@ -158,9 +158,9 @@ describe('surcharge エンジンへの流し込み', () => {
       },
       masters,
     )
-    // 価格差 30 × 155km(県庁間 長崎市→福岡市) ÷ 4.0 = 1162.5 → round 1163
+    // 上昇額 27.5 × 155km(県庁間 長崎市→福岡市) ÷ 4.0 = 1065.625 → ceil 1066
     expect(r.status).toBe('ok')
     expect(r.km).toBe(155)
-    expect(r.amount).toBe(1163)
+    expect(r.amount).toBe(1066)
   })
 })
