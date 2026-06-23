@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { parseDistanceCsv, distanceKey, type DistanceMaster } from '../../src/distance'
-import { parseFuelEfficiencyCsv, type FuelEfficiencyEntry } from '../../src/fuel-efficiency'
-import { parseDieselPriceCsv, type DieselPriceEntry } from '../../src/diesel-price'
+import { parseFuelEfficiencyCsv, toEfficiencyLookup, type FuelEfficiencyEntry } from '../../src/fuel-efficiency'
+import { parseDieselPriceCsv, toMonthlyPriceMap, type DieselPriceEntry } from '../../src/diesel-price'
+import {
+  computeSurcharge,
+  type SurchargeMasters,
+  type AggregateRow,
+  type SurchargeResult,
+} from '../../src/surcharge'
+import { mapToMeisaiRows, type IchibanSurchargeRow } from '../../src/surcharge-review'
 import {
   generateIncrementTable,
   TIME_BASED_DISTANCES,
@@ -396,6 +403,77 @@ async function onDieselProbe() {
   } catch (err: unknown) {
     probeState.value = 'error'
     probeErr.value = err instanceof Error ? err.message : 'probe に失敗しました'
+  }
+}
+
+// --- 確認 UI (#5): 一番星 → 計算エンジン → 明細・得意先別集計 ---
+const reviewFrom = ref('')
+const reviewTo = ref('')
+const reviewKind = ref<'billing_only' | 'transport' | 'all'>('billing_only')
+const reviewState = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+const reviewMsg = ref('')
+const reviewTotal = ref(0)
+const reviewAggregates = ref<AggregateRow[]>([])
+const reviewWarnings = ref<SurchargeResult[]>([])
+const reviewOkCount = ref(0)
+
+async function onRunReview() {
+  if (!reviewFrom.value || !reviewTo.value) {
+    reviewMsg.value = '期間 (from / to) を指定してください'
+    reviewState.value = 'error'
+    return
+  }
+  reviewState.value = 'running'
+  reviewMsg.value = ''
+  try {
+    // 1) 一番星から請求基礎データを取得 (proxy)
+    const base = await $fetch<{
+      rows: IchibanSurchargeRow[]
+      reason?: string
+      upstreamStatus?: number
+    }>('/api/surcharge-base', {
+      query: { from: reviewFrom.value, to: reviewTo.value, kind: reviewKind.value, limit: 10000 },
+    })
+    if (base.reason) {
+      reviewState.value = 'error'
+      reviewMsg.value =
+        base.reason === 'upstream'
+          ? `一番星が ${base.upstreamStatus} を返しました`
+          : base.reason === 'connect_failed'
+            ? '一番星への接続に失敗しました'
+            : '一番星連携が未設定です'
+      return
+    }
+
+    // 2) マスタを並列ロード (CSV → parser)
+    const [distCsv, fuelCsv, dieselCsv] = await Promise.all([
+      $fetch<string>('/api/distance', { responseType: 'text' }),
+      $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
+      $fetch<string>('/api/diesel-price', { responseType: 'text' }),
+    ])
+    const distanceKm = parseDistanceCsv(distCsv).master.distanceKm
+    const fuelEntries = parseFuelEfficiencyCsv(fuelCsv).entries
+    const dieselEntries2 = parseDieselPriceCsv(dieselCsv).entries
+
+    const masters: SurchargeMasters = {
+      basePrice: notifBasePrice,
+      priceStep: notifPriceStep,
+      monthlyDieselPrice: toMonthlyPriceMap(dieselEntries2),
+      fuelEfficiency: toEfficiencyLookup(fuelEntries),
+      distanceKm,
+    }
+
+    // 3) 計算エンジンで集計
+    const summary = computeSurcharge(mapToMeisaiRows(base.rows), masters)
+    reviewTotal.value = summary.total
+    reviewAggregates.value = summary.aggregates
+    reviewWarnings.value = summary.warnings
+    reviewOkCount.value = summary.results.filter((r) => r.status === 'ok').length
+    reviewState.value = 'done'
+    if (base.rows.length === 0) reviewMsg.value = '対象期間の請求行がありません'
+  } catch (err: unknown) {
+    reviewState.value = 'error'
+    reviewMsg.value = err instanceof Error ? err.message : '集計に失敗しました'
   }
 }
 
@@ -824,10 +902,80 @@ watch(
       <section v-else-if="active === 'review'" class="card">
         <h2>明細・得意先別集計</h2>
         <p>
-          期間選択 → 明細・得意先別集計・警告は
-          <a href="https://github.com/ohishi-exp/nuxt-ichibanboshi-seikyu/issues/5">#5</a>
-          で実装予定です。計算エンジン (段階テーブル + ceil、有効期間つき燃費) は実装済み。
+          期間を指定して一番星から請求基礎データを取得し、計算エンジン (段階テーブル + ceil、
+          有効期間つき燃費、県庁間距離) で得意先別 × 請求日に集計します。各マスタ
+          (距離・燃費・軽油価格) の現在値を使います。
         </p>
+        <div class="actions">
+          <label class="inline-label">
+            from
+            <input v-model="reviewFrom" type="month" required />
+          </label>
+          <label class="inline-label">
+            to
+            <input v-model="reviewTo" type="month" required />
+          </label>
+          <label class="inline-label">
+            区分
+            <select v-model="reviewKind">
+              <option value="billing_only">請求のみ (請求K=1)</option>
+              <option value="transport">通常運送 (請求K=0)</option>
+              <option value="all">全区分</option>
+            </select>
+          </label>
+          <button class="btn" :disabled="reviewState === 'running'" @click="onRunReview">
+            集計実行
+          </button>
+        </div>
+        <p v-if="reviewState === 'running'" class="status">集計中…</p>
+        <p v-else-if="reviewState === 'error'" class="status err">{{ reviewMsg }}</p>
+
+        <template v-if="reviewState === 'done'">
+          <p v-if="reviewMsg" class="status">{{ reviewMsg }}</p>
+          <p class="summary">
+            計上 {{ reviewOkCount }} 件 / 合計サーチャージ
+            <strong>{{ reviewTotal.toLocaleString() }} 円</strong>
+            <span v-if="reviewWarnings.length"> ・ 未計上(要確認) {{ reviewWarnings.length }} 件</span>
+          </p>
+
+          <h3 class="view-title">得意先別 × 請求日</h3>
+          <table v-if="reviewAggregates.length" class="grid">
+            <thead>
+              <tr><th>得意先C</th><th>得意先名</th><th>請求日</th><th>件数</th><th>サーチャージ (円)</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(a, i) in reviewAggregates" :key="i">
+                <td>{{ a.tokuiC }}</td>
+                <td>{{ a.tokuiName }}</td>
+                <td>{{ a.seikyuDate || '（請求日なし）' }}</td>
+                <td class="num">{{ a.count }}</td>
+                <td class="num">{{ a.amount.toLocaleString() }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="status">計上対象がありません。</p>
+
+          <template v-if="reviewWarnings.length">
+            <h3 class="view-title">未計上 (要確認)</h3>
+            <table class="grid">
+              <thead>
+                <tr><th>得意先C</th><th>積地→卸地</th><th>車種C</th><th>売上日</th><th>理由</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(w, i) in reviewWarnings.slice(0, 200)" :key="i">
+                  <td>{{ w.row.tokuiC }}</td>
+                  <td>{{ w.row.fromPref }}→{{ w.row.toPref }}</td>
+                  <td>{{ w.row.sharuC }}</td>
+                  <td>{{ w.row.uriageDate }}</td>
+                  <td>{{ w.warning }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-if="reviewWarnings.length > 200" class="status">
+              …他 {{ reviewWarnings.length - 200 }} 件
+            </p>
+          </template>
+        </template>
       </section>
 
       <!-- 設定 / スキーマ初期化 -->
@@ -965,6 +1113,20 @@ nav {
 }
 .btn:hover {
   background: #f9fafb;
+}
+.inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #374151;
+}
+.inline-label input,
+.inline-label select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.85rem;
 }
 .btn.file input {
   display: none;
