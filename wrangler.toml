@@ -21,12 +21,11 @@ NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 # GET /api/vehicles (車種ﾏｽﾀ) で取得する。rust-ichiban.mtamaramu.com は
 # Cloudflare Access (Service Token) 保護なので CF-Access-Client-Id/Secret を付けて呼ぶ
 # (nuxt-ichibanboshi と同方式)。
-# CF_ACCESS_CLIENT_ID は公開識別子なので plain var。client_id は CI deploy 用に発行済の
-# service token `rust-ichibanboshi-ci-deploy` を再利用する (新規発行しない)。
-# ⚠ このトークンを rust-ichiban.mtamaramu.com の CF Access app の Service Auth 許可
-#    リストに登録しておくこと (未登録だと /api/vehicles が 403)。
+# nuxt-ichibanboshi 本番と同じ service token `ichibanboshi-api` を再利用する
+# (= rust-ichiban の CF Access app の Service Auth 許可リストに既に登録済 → 追加作業不要)。
+# CF_ACCESS_CLIENT_ID は公開識別子なので plain var、secret は下の binding。
 ICHIBAN_API_BASE = "https://rust-ichiban.mtamaramu.com"
-CF_ACCESS_CLIENT_ID = "824a8b3c7042c7040924f38797a832f7.access"
+CF_ACCESS_CLIENT_ID = "44252f056e72590bee3c4bb8f85de841.access"
 
 # auth-worker のブラウザ JWT (logi_auth_token cookie) を /api/distance で署名検証する
 # ための HS256 鍵 JWT_SECRET。auth-worker / rust-alc-api / hcreader と同じ
@@ -41,9 +40,10 @@ binding = "JWT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "JWT_SECRET"
 
-# 一番星 CF Access service token の client_secret (CI-deploy トークン再利用)。
+# 一番星 CF Access service token (ichibanboshi-api) の client_secret。
 # GCP cloudsql-sv の同名 secret を SoT とし、CF Secrets Store へ sync 済
 # (secrets-inventory sync_from_gcp、secret_id 13965df3...)。secret-verify が GCP で検証する。
+# CF_ACCESS_CLIENT_ID (上の var) とペアになる値。
 [[secrets_store_secrets]]
 binding = "CF_ACCESS_CLIENT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
