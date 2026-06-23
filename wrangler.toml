@@ -17,6 +17,19 @@ custom_domain = true
 # worker は tenant_id を持たない。
 NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 
+# auth-worker のブラウザ JWT (logi_auth_token cookie) を /api/distance で署名検証する
+# ための HS256 鍵 JWT_SECRET。値は auth-worker / rust-alc-api と同じ HS256 鍵。
+#
+# CF Secrets Store binding ([[secrets_store_secrets]]) ではなく **Worker secret** で持つ。
+# 理由: frontend-ci は secrets_store_secrets を宣言すると secret-verify が必須化し、
+# ohishi-exp org は GCP WIF (GCP_WIF_PROVIDER 等) 未配線のため gate を満たせない。
+# Worker secret なら gate に掛からず、コードは resolveSecret() が string も扱う。
+#
+# one-time setup (deploy とは独立、未設定時 /api/distance は 503):
+#   npx wrangler secret put JWT_SECRET   # 値は auth-worker と同一の HS256 鍵
+#
+# (将来 ohishi-exp に GCP secret-verify を配線したら Secrets Store binding へ移行可)
+
 # 県庁間距離マスタ等の D1 (距離制サーチャージ)。Refs #11
 #
 # ⚠️ D1 を作成するまで binding を有効化しない。placeholder の database_id だと
