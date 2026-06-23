@@ -24,12 +24,25 @@ export default defineEventHandler(async (event) => {
         'CF-Access-Client-Secret': cfg.clientSecret,
       },
     })
-  } catch {
+  } catch (e: unknown) {
+    console.error('vehicles proxy: fetch threw', e instanceof Error ? e.message : e)
     throw createError({ statusCode: 502, statusMessage: '一番星への接続に失敗しました' })
   }
   if (!res.ok) {
-    // 上流の詳細は response に echo せず status だけ伝える
-    throw createError({ statusCode: 502, statusMessage: `一番星が ${res.status} を返しました` })
+    // 上流の詳細値は client に echo しないが、診断のため status と本文先頭を log に残し、
+    // status code 自体は client にも伝える (403=CF Access / 404=未デプロイ / 5xx=一番星 を切り分け可能に)。
+    let snippet = ''
+    try {
+      snippet = (await res.text()).slice(0, 300)
+    } catch {
+      // ignore
+    }
+    console.error(`vehicles proxy: upstream ${res.status}`, snippet)
+    throw createError({
+      statusCode: 502,
+      statusMessage: `一番星が ${res.status} を返しました`,
+      data: { upstreamStatus: res.status },
+    })
   }
 
   const json = (await res.json()) as {
