@@ -46,6 +46,16 @@ const nav: { key: Section; label: string; group: string }[] = [
 ]
 const groups = [...new Set(nav.map((n) => n.group))]
 
+// 直近に開いていたタブを復元する (リロードで毎回先頭タブに戻らないように)。
+// 認証コールバックが URL fragment を使うため hash は避け、localStorage に保存する。
+const ACTIVE_TAB_KEY = 'ichibanboshi-seikyu:active-tab'
+if (import.meta.client) {
+  const saved = localStorage.getItem(ACTIVE_TAB_KEY)
+  if (saved && nav.some((n) => n.key === saved)) {
+    active.value = saved as Section
+  }
+}
+
 // --- 届出書 (届出用紙)。段階上昇額テーブル + 時間制平均距離 + 燃費マスタ現在値。Refs #11-B ---
 const timeBasedDistances = TIME_BASED_DISTANCES
 // 基準価格 / 刻み幅は設定 (surcharge_settings) で変更可能。既定は notification-form の定数。
@@ -826,6 +836,8 @@ watch(
       if (fuelViewState.value === 'idle') void loadFuelView()
       if (settingsState.value === 'idle') void loadSurchargeSettingsView()
     }
+    // 開いたタブを保存 (次回リロード時に復元する)
+    if (import.meta.client) localStorage.setItem(ACTIVE_TAB_KEY, sec)
   },
   { immediate: true },
 )
