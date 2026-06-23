@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { parseDistanceCsv, distanceKey, type DistanceMaster } from '../../src/distance'
 import { parseFuelEfficiencyCsv, type FuelEfficiencyEntry } from '../../src/fuel-efficiency'
+import { parseDieselPriceCsv, type DieselPriceEntry } from '../../src/diesel-price'
 import {
   generateIncrementTable,
   TIME_BASED_DISTANCES,
@@ -15,11 +16,12 @@ const config = useRuntimeConfig()
 const authWorkerUrl = config.public.authWorkerUrl as string
 
 // --- サイドバー (nuxt_dtako_logs ライクの左ナビ形式) ---
-type Section = 'distance' | 'fuel' | 'notification' | 'review' | 'settings'
+type Section = 'distance' | 'fuel' | 'diesel' | 'notification' | 'review' | 'settings'
 const active = ref<Section>('distance')
 const nav: { key: Section; label: string; group: string }[] = [
   { key: 'distance', label: '県庁間距離マスタ', group: 'マスタ' },
   { key: 'fuel', label: '燃費マスタ', group: 'マスタ' },
+  { key: 'diesel', label: '軽油価格マスタ', group: 'マスタ' },
   { key: 'notification', label: '届出書', group: '帳票' },
   { key: 'review', label: '明細・集計', group: '確認' },
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
@@ -270,6 +272,101 @@ async function onFuelUpload(e: Event) {
   }
 }
 
+// --- 軽油価格マスタ (当月全国平均軽油価格)。Refs #11 (#2) ---
+const dieselEntries = ref<DieselPriceEntry[]>([])
+const dieselViewState = ref<ViewState>('idle')
+const dieselViewMsg = ref('')
+const dieselUploadState = ref<UploadState>('idle')
+const dieselUploadMsg = ref('')
+const dieselUploadWarnings = ref<string[]>([])
+const dieselFormMonth = ref('')
+const dieselFormPrice = ref<number | null>(null)
+const dieselRowState = ref<'idle' | 'saving' | 'error'>('idle')
+const dieselRowMsg = ref('')
+
+async function loadDieselView() {
+  dieselViewState.value = 'loading'
+  dieselViewMsg.value = ''
+  try {
+    const csv = await $fetch<string>('/api/diesel-price', { responseType: 'text' })
+    dieselEntries.value = parseDieselPriceCsv(csv).entries
+    dieselViewState.value = 'done'
+    if (dieselEntries.value.length === 0) dieselViewMsg.value = '登録なし (まだ登録されていません)'
+  } catch (err: unknown) {
+    dieselViewState.value = 'error'
+    dieselViewMsg.value = err instanceof Error ? err.message : '読込に失敗しました'
+  }
+}
+
+async function onDieselUpload(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  dieselUploadState.value = 'uploading'
+  dieselUploadMsg.value = ''
+  dieselUploadWarnings.value = []
+  try {
+    const text = await file.text()
+    const res = await $fetch<{ ok: boolean; entries: number; warnings: string[] }>(
+      '/api/diesel-price',
+      { method: 'POST', body: text, headers: { 'Content-Type': 'text/csv' } },
+    )
+    dieselUploadState.value = 'done'
+    dieselUploadMsg.value = `取込完了: ${res.entries} 件`
+    dieselUploadWarnings.value = res.warnings ?? []
+    await loadDieselView()
+  } catch (err: unknown) {
+    dieselUploadState.value = 'error'
+    dieselUploadMsg.value = err instanceof Error ? err.message : '取込に失敗しました'
+  } finally {
+    input.value = ''
+  }
+}
+
+async function onAddDiesel() {
+  dieselRowState.value = 'saving'
+  dieselRowMsg.value = ''
+  try {
+    await $fetch('/api/diesel-price-row', {
+      method: 'POST',
+      body: { month: dieselFormMonth.value, price: dieselFormPrice.value },
+    })
+    dieselRowState.value = 'idle'
+    dieselFormMonth.value = ''
+    dieselFormPrice.value = null
+    await loadDieselView()
+  } catch (err: unknown) {
+    dieselRowState.value = 'error'
+    dieselRowMsg.value = err instanceof Error ? err.message : '登録に失敗しました'
+  }
+}
+
+async function onSaveDiesel(e: DieselPriceEntry) {
+  dieselRowState.value = 'saving'
+  dieselRowMsg.value = ''
+  try {
+    await $fetch('/api/diesel-price-row', {
+      method: 'POST',
+      body: { month: e.month, price: e.price },
+    })
+    dieselRowState.value = 'idle'
+    await loadDieselView()
+  } catch (err: unknown) {
+    dieselRowState.value = 'error'
+    dieselRowMsg.value = err instanceof Error ? err.message : '保存に失敗しました'
+  }
+}
+
+async function onDeleteDiesel(month: string) {
+  try {
+    await $fetch('/api/diesel-price-row', { method: 'DELETE', query: { month } })
+    await loadDieselView()
+  } catch (err: unknown) {
+    dieselViewMsg.value = err instanceof Error ? err.message : '削除に失敗しました'
+    dieselViewState.value = 'error'
+  }
+}
+
 // --- D1 スキーマ初期化 (wrangler d1 migrations apply の代わり)。Refs #11 ---
 type MigrateState = 'idle' | 'running' | 'done' | 'error'
 const migrateState = ref<MigrateState>('idle')
@@ -299,6 +396,7 @@ watch(
       if (fuelViewState.value === 'idle') void loadFuelView()
       if (!vehiclesLoaded.value) void loadVehicles()
     }
+    if (sec === 'diesel' && dieselViewState.value === 'idle') void loadDieselView()
     // 届出書も燃費マスタ現在値を載せるため fuel を読む
     if (sec === 'notification' && fuelViewState.value === 'idle') void loadFuelView()
   },
@@ -505,6 +603,70 @@ watch(
         </table>
         <p v-if="rowState === 'error'" class="status err">{{ rowMsg }}</p>
         <p v-else-if="rowSavedMsg" class="status ok">{{ rowSavedMsg }}</p>
+      </section>
+
+      <!-- 軽油価格マスタ -->
+      <section v-else-if="active === 'diesel'" class="card">
+        <h2>軽油価格マスタ (当月全国平均)</h2>
+        <p>
+          月別の全国平均軽油価格 (円/L) を管理します。列は <code>年月,軽油価格</code>。
+          計算エンジンの「当月価格」に使います。経産省 (資源エネルギー庁) 公表値からの
+          自動取得は別途対応予定で、当面は CSV / 手入力で登録します。
+        </p>
+        <div class="actions">
+          <a class="btn" href="/api/diesel-price" download="diesel-price.csv">CSV ダウンロード</a>
+          <label class="btn file">
+            CSV アップロード
+            <input type="file" accept=".csv,text/csv" @change="onDieselUpload" />
+          </label>
+          <button class="btn" :disabled="dieselViewState === 'loading'" @click="loadDieselView">
+            表示を更新
+          </button>
+        </div>
+        <p v-if="dieselUploadState === 'uploading'" class="status">取込中…</p>
+        <p v-else-if="dieselUploadState === 'done'" class="status ok">{{ dieselUploadMsg }}</p>
+        <p v-else-if="dieselUploadState === 'error'" class="status err">{{ dieselUploadMsg }}</p>
+        <ul v-if="dieselUploadWarnings.length" class="warnings">
+          <li v-for="(w, i) in dieselUploadWarnings.slice(0, 20)" :key="i">{{ w }}</li>
+          <li v-if="dieselUploadWarnings.length > 20">…他 {{ dieselUploadWarnings.length - 20 }} 件</li>
+        </ul>
+
+        <h3 class="view-title">新規登録</h3>
+        <form class="row-form" @submit.prevent="onAddDiesel">
+          <label>
+            年月
+            <input v-model="dieselFormMonth" type="month" required />
+          </label>
+          <label>
+            軽油価格 (円/L)
+            <input v-model.number="dieselFormPrice" type="number" step="0.1" min="0" required />
+          </label>
+          <button class="btn" type="submit" :disabled="dieselRowState === 'saving'">追加</button>
+        </form>
+        <p v-if="dieselRowState === 'error'" class="status err">{{ dieselRowMsg }}</p>
+
+        <h3 class="view-title">現在の登録内容</h3>
+        <p class="lead-note">軽油価格は直接編集して「保存」で更新できます (年月はキーのため変更不可)。</p>
+        <p v-if="dieselViewState === 'loading'" class="status">読込中…</p>
+        <p v-else-if="dieselViewState === 'error'" class="status err">{{ dieselViewMsg }}</p>
+        <p v-else-if="dieselViewMsg" class="status">{{ dieselViewMsg }}</p>
+        <table v-if="dieselViewState === 'done' && dieselEntries.length" class="grid">
+          <thead>
+            <tr><th>年月</th><th>軽油価格 (円/L)</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in dieselEntries" :key="e.month">
+              <td>{{ e.month }}</td>
+              <td>
+                <input v-model.number="e.price" type="number" step="0.1" min="0" class="cell-edit num" />
+              </td>
+              <td class="row-ops">
+                <button class="link-save" :disabled="dieselRowState === 'saving'" @click="onSaveDiesel(e)">保存</button>
+                <button class="link-del" @click="onDeleteDiesel(e.month)">削除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <!-- 届出書 (届出用紙)。印刷 → PDF 保存 -->
