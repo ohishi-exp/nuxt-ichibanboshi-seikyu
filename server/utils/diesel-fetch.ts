@@ -66,6 +66,12 @@ export function pickLatestWeeklyXlsxUrl(links: string[]): string | null {
   return best?.url ?? null
 }
 
+/** 週次 xlsx URL から公表日キー (YYMMDD) を取り出す (純粋)。形式不一致は null */
+export function weeklyKeyFromUrl(url: string): string | null {
+  const m = /\/(\d{6})s5\.xlsx$/i.exec(url)
+  return m?.[1] ?? null
+}
+
 /** 公表予定日 1 件 (例: 6月24日(水)14:00 → date='2026-06-24', time='14:00', weekday='水') */
 export interface PublicationDate {
   /** YYYY-MM-DD (JST。年はページに無いので now から補完) */

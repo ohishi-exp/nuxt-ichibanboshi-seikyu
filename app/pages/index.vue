@@ -397,6 +397,36 @@ async function onDieselImport() {
   }
 }
 
+// cron と同じオーケストレーション (重複判定 + LINE WORKS 通知) を手動実行。Refs #11 (#2)
+const cronState = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+const cronMsg = ref('')
+async function onDieselCron() {
+  cronState.value = 'running'
+  cronMsg.value = ''
+  try {
+    const res = await $fetch<{
+      status: string
+      months?: number
+      latestMonth?: string
+      latestPrice?: number
+      notified?: boolean
+      reason?: string
+    }>('/api/diesel-cron', { method: 'POST' })
+    cronState.value = 'done'
+    if (res.status === 'imported') {
+      cronMsg.value = `取込 (最新 ${res.latestMonth} = ${res.latestPrice} 円/L) / 通知: ${res.notified ? '送信' : '未設定'}`
+    } else if (res.status === 'skipped_no_new') {
+      cronMsg.value = '新しい週次ファイルが無いため skip (取得済み)'
+    } else {
+      cronMsg.value = `${res.status}: ${res.reason ?? ''}`
+    }
+    await loadDieselView()
+  } catch (err: unknown) {
+    cronState.value = 'error'
+    cronMsg.value = err instanceof Error ? err.message : 'cron 実行に失敗しました'
+  }
+}
+
 // 経産省公表値の自動取得 probe (Phase 1: Worker から到達できるか確認)。Refs #11 (#2)
 interface PublicationDate {
   date: string
@@ -816,16 +846,25 @@ watch(
         <p class="lead-note">
           石油製品価格調査の結果ページから最新の週次ファイル (給油所小売価格) を解決し、
           軽油シートの全国平均を月次平均に集約して直近 24 ヶ月を upsert します。手入力した月は
-          上書きされません。
+          上書きされません。<br />
+          自動取込は <strong>毎週水曜 14:05/14:15/14:25 (公表直後) に cron</strong> が実行し、
+          新ファイルが出た 1 回だけ取込 + LINE WORKS 通知します (取得後は当日 skip)。
+          下のボタンで手動でも実行できます。
         </p>
         <div class="actions">
           <button class="btn" :disabled="importState === 'running'" @click="onDieselImport">
-            経産省から取込
+            経産省から取込 (強制)
+          </button>
+          <button class="btn" :disabled="cronState === 'running'" @click="onDieselCron">
+            cron 手動実行 (重複判定+通知)
           </button>
         </div>
         <p v-if="importState === 'running'" class="status">取込中… (公表ページ → xlsx 解析)</p>
         <p v-else-if="importState === 'done'" class="status ok">{{ importMsg }}</p>
         <p v-else-if="importState === 'error'" class="status err">{{ importMsg }}</p>
+        <p v-if="cronState === 'running'" class="status">cron 実行中… (重複判定 → 取込 → 通知)</p>
+        <p v-else-if="cronState === 'done'" class="status ok">{{ cronMsg }}</p>
+        <p v-else-if="cronState === 'error'" class="status err">{{ cronMsg }}</p>
 
         <h3 class="view-title">新規登録</h3>
         <form class="row-form" @submit.prevent="onAddDiesel">

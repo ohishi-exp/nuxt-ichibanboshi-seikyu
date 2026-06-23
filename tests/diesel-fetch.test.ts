@@ -3,6 +3,8 @@ import {
   isAllowedSourceUrl,
   extractDataFileLinks,
   extractPublicationSchedule,
+  pickLatestWeeklyXlsxUrl,
+  weeklyKeyFromUrl,
   ENECHO_RESULTS_URL,
 } from '../server/utils/diesel-fetch'
 
@@ -91,5 +93,20 @@ describe('extractPublicationSchedule (公表予定日)', () => {
 
   it('予定日が無ければ空配列', () => {
     expect(extractPublicationSchedule('<p>公表予定日は未定です</p>')).toEqual([])
+  })
+})
+
+describe('weeklyKeyFromUrl', () => {
+  const base = 'https://www.enecho.meti.go.jp/statistics/petroleum_and_lpgas/pl007/xlsx/'
+  it('YYMMDDs5.xlsx の YYMMDD を返す', () => {
+    expect(weeklyKeyFromUrl(`${base}260617s5.xlsx`)).toBe('260617')
+  })
+  it('形式不一致は null', () => {
+    expect(weeklyKeyFromUrl(`${base}260617.xlsx`)).toBeNull()
+    expect(weeklyKeyFromUrl('not a url')).toBeNull()
+  })
+  it('pickLatestWeeklyXlsxUrl の戻り値と整合', () => {
+    const url = pickLatestWeeklyXlsxUrl([`${base}260529s5.xlsx`, `${base}260617s5.xlsx`])
+    expect(url && weeklyKeyFromUrl(url)).toBe('260617')
   })
 })
