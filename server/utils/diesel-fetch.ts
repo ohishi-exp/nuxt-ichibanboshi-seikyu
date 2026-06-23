@@ -48,3 +48,20 @@ export function extractDataFileLinks(html: string, baseUrl: string): string[] {
   }
   return [...out]
 }
+
+/**
+ * データファイル link 群から「給油所小売 週次 全履歴ファイル」(YYMMDDs5.xlsx) の最新を選ぶ。
+ * 軽油など全 product の全国平均週次を含む累積ファイル。ファイル名の YYMMDD (公表日) が
+ * 最大のものを返す。該当が無ければ null。
+ */
+export function pickLatestWeeklyXlsxUrl(links: string[]): string | null {
+  let best: { url: string; key: string } | null = null
+  const re = /\/(\d{6})s5\.xlsx$/i
+  for (const url of links) {
+    const m = re.exec(url)
+    if (!m || m[1] === undefined) continue
+    const key = m[1]
+    if (best === null || key > best.key) best = { url, key }
+  }
+  return best?.url ?? null
+}

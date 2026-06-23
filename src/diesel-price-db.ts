@@ -78,3 +78,28 @@ export async function upsertDieselEntry(db: D1Database, entry: DieselPriceEntry)
 export async function deleteDieselEntry(db: D1Database, month: string): Promise<void> {
   await db.prepare('DELETE FROM diesel_price WHERE month = ?').bind(month).run()
 }
+
+/**
+ * 複数月を upsert する (経産省自動取込用)。DELETE せず INSERT OR REPLACE するので、
+ * 取込対象外の月 (手入力分など) は保持される。chunked batch で param 上限を避ける。
+ */
+export async function upsertManyDieselEntries(
+  db: D1Database,
+  entries: DieselPriceEntry[],
+): Promise<void> {
+  if (entries.length === 0) return
+  const rows = entriesToRows(entries)
+  const stmts: D1PreparedStatement[] = []
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK)
+    const placeholders = chunk.map(() => '(?, ?)').join(', ')
+    const binds: unknown[] = []
+    for (const r of chunk) binds.push(r.month, r.price)
+    stmts.push(
+      db
+        .prepare(`INSERT OR REPLACE INTO diesel_price (month, price) VALUES ${placeholders}`)
+        .bind(...binds),
+    )
+  }
+  await db.batch(stmts)
+}
