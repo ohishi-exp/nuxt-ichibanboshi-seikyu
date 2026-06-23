@@ -19,6 +19,29 @@ export interface D1Database {
   batch<T = unknown>(statements: D1PreparedStatement[]): Promise<T[]>
 }
 
+// migrations/0001_kenchokan_distance.sql と同一の DDL (idempotent)。
+// CLI (`wrangler d1 migrations apply`) を使わず画面/コードからスキーマを適用できるようにする。
+export const SCHEMA_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS kenchokan_prefecture (
+    pref       TEXT PRIMARY KEY,
+    city       TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS kenchokan_distance (
+    from_pref TEXT NOT NULL,
+    to_pref   TEXT NOT NULL,
+    km        INTEGER NOT NULL,
+    PRIMARY KEY (from_pref, to_pref)
+  )`,
+]
+
+/** D1 にスキーマを適用する (CREATE TABLE IF NOT EXISTS、何度呼んでも安全) */
+export async function ensureSchema(db: D1Database): Promise<void> {
+  for (const ddl of SCHEMA_DDL) {
+    await db.prepare(ddl).run()
+  }
+}
+
 export interface PrefRow {
   pref: string
   city: string
