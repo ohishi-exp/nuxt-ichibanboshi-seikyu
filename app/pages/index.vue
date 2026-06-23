@@ -39,7 +39,17 @@ const nav: { key: Section; label: string; group: string }[] = [
   { key: 'notification', label: '届出書', group: '設定' },
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
 ]
-const groups = [...new Set(nav.map((n) => n.group))]
+// 設定グループ (距離/燃費/軽油/サーチャージ/届出/DB初期化) を 2 段目タブにする。
+const settingsNav = nav.filter((n) => n.key !== 'shimebi')
+const isSettings = computed(() => active.value !== 'shimebi')
+// 設定内で最後に開いていたサブタブ。「設定」を押した時にここへ戻す。
+const lastSettingsSub = ref<Section>('distance')
+watch(active, (v) => {
+  if (v !== 'shimebi') lastSettingsSub.value = v
+})
+function openSettings() {
+  if (active.value === 'shimebi') active.value = lastSettingsSub.value
+}
 
 // 直近に開いていたタブを復元する (リロードで毎回先頭タブに戻らないように)。
 // 認証コールバックが URL fragment を使うため hash は避け、localStorage に保存する。
@@ -813,18 +823,20 @@ watch(
         <span>燃料サーチャージ請求</span>
       </div>
       <nav>
-        <template v-for="g in groups" :key="g">
-          <p class="nav-group">{{ g }}</p>
-          <button
-            v-for="item in nav.filter((n) => n.group === g)"
-            :key="item.key"
-            class="nav-item"
-            :class="{ active: active === item.key }"
-            @click="active = item.key"
-          >
-            {{ item.label }}
-          </button>
-        </template>
+        <button
+          class="nav-item"
+          :class="{ active: active === 'shimebi' }"
+          @click="active = 'shimebi'"
+        >
+          締め日別 取引先
+        </button>
+        <button
+          class="nav-item"
+          :class="{ active: isSettings }"
+          @click="openSettings"
+        >
+          設定
+        </button>
       </nav>
       <footer class="side-foot">
         <span>大石運輸倉庫株式会社テナント限定</span>
@@ -833,6 +845,19 @@ watch(
     </aside>
 
     <main class="content">
+      <!-- 設定グループの 2 段目タブ (締め日別 取引先 以外を「設定」配下にまとめる) -->
+      <div v-if="isSettings" class="subtabs">
+        <button
+          v-for="item in settingsNav"
+          :key="item.key"
+          class="subtab"
+          :class="{ active: active === item.key }"
+          @click="active = item.key"
+        >
+          {{ item.label }}
+        </button>
+      </div>
+
       <!-- 県庁間距離マスタ -->
       <section v-if="active === 'distance'" class="card">
         <h2>県庁間距離マスタ (距離制)</h2>
@@ -1481,12 +1506,29 @@ nav {
   flex: 1;
   padding: 0.75rem 0.5rem;
 }
-.nav-group {
-  margin: 0.75rem 0.75rem 0.25rem;
-  font-size: 0.7rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #6b7280;
+.subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid #d1d5db;
+}
+.subtab {
+  padding: 0.45rem 0.9rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #4b5563;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.subtab:hover {
+  color: #111827;
+}
+.subtab.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  font-weight: 600;
 }
 .nav-item {
   display: block;
