@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { excelSerialToMonth, extractMonthlyDieselAverages } from '../src/diesel-xlsx'
+import {
+  excelSerialToMonth,
+  excelSerialToDate,
+  extractMonthlyDieselAverages,
+  extractWeeklyDieselPrices,
+} from '../src/diesel-xlsx'
 import { pickLatestWeeklyXlsxUrl } from '../server/utils/diesel-fetch'
 import type { DieselPriceEntry } from '../src/diesel-price'
 
@@ -14,6 +19,44 @@ describe('excelSerialToMonth', () => {
   it('非有限 / 範囲外 → null', () => {
     expect(excelSerialToMonth(NaN)).toBeNull()
     expect(excelSerialToMonth(0)).toBeNull()
+  })
+})
+
+describe('excelSerialToDate', () => {
+  it('33112 → 1990-08-27', () => {
+    expect(excelSerialToDate(33112)).toBe('1990-08-27')
+  })
+  it('範囲外は null', () => {
+    expect(excelSerialToDate(0)).toBeNull()
+    expect(excelSerialToDate(NaN)).toBeNull()
+  })
+})
+
+describe('extractWeeklyDieselPrices', () => {
+  const aoa: unknown[][] = [
+    ['h', '調査日', '全国'],
+    ['', 45800, 150], // 2025-05
+    ['', 45801, 152], // 2025-05
+    ['', 45831, 160], // 2025-06
+    ['', 45831, '', 0], // 全国空 → skip (重複日でも空は除外)
+  ]
+  it('週次を調査日昇順で返す (date/month/price)', () => {
+    const wk = extractWeeklyDieselPrices(aoa)
+    expect(wk).toHaveLength(3)
+    expect(wk[0]).toEqual({ date: excelSerialToDate(45800), month: '2025-05', price: 150 })
+    expect(wk.map((w) => w.price)).toEqual([150, 152, 160])
+  })
+  it('recentMonths で直近 N ヶ月の週のみ', () => {
+    const wk = extractWeeklyDieselPrices(aoa, { recentMonths: 1 })
+    expect(wk.every((w) => w.month === '2025-06')).toBe(true)
+    expect(wk).toHaveLength(1)
+  })
+  it('週次平均が月次平均と一致する (検算の整合)', () => {
+    const monthly = extractMonthlyDieselAverages(aoa)
+    const wk = extractWeeklyDieselPrices(aoa)
+    const may = wk.filter((w) => w.month === '2025-05')
+    const avg = Math.round((may.reduce((s, w) => s + w.price, 0) / may.length) * 10) / 10
+    expect(monthly.find((m) => m.month === '2025-05')?.price).toBe(avg) // (150+152)/2 = 151
   })
 })
 

@@ -6,8 +6,13 @@ import {
   pickLatestWeeklyXlsxUrl,
   weeklyKeyFromUrl,
 } from './diesel-fetch'
-import { KEIYU_SHEET_NAME, extractMonthlyDieselAverages } from '../../src/diesel-xlsx'
+import {
+  KEIYU_SHEET_NAME,
+  extractMonthlyDieselAverages,
+  extractWeeklyDieselPrices,
+} from '../../src/diesel-xlsx'
 import { upsertManyDieselEntries } from '../../src/diesel-price-db'
+import { ensureDieselWeeklySchema, upsertManyDieselWeekly } from '../../src/diesel-weekly-db'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -69,11 +74,21 @@ export async function importDieselFromXlsxUrl(
     }
   }
 
-  const entries = extractMonthlyDieselAverages(aoa, { recentMonths: opts.recentMonths ?? 24 })
+  const recentMonths = opts.recentMonths ?? 24
+  const entries = extractMonthlyDieselAverages(aoa, { recentMonths })
   if (entries.length === 0) {
     return { ok: false, reason: '軽油の月次データを抽出できません', sourceUrl, sourceKey }
   }
   await upsertManyDieselEntries(db, entries)
+
+  // 検算用に週次 全国平均も保存 (月次平均の根拠)。失敗しても月次取込は成立済みなので握る。
+  try {
+    const weekly = extractWeeklyDieselPrices(aoa, { recentMonths })
+    await ensureDieselWeeklySchema(db)
+    await upsertManyDieselWeekly(db, weekly)
+  } catch (e: unknown) {
+    console.warn('diesel weekly upsert failed:', e instanceof Error ? e.message : e)
+  }
 
   const latest = entries[entries.length - 1]
   return {
