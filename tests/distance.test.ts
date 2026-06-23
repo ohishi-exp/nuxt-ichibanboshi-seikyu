@@ -108,6 +108,22 @@ describe('parseDistanceCsv (異常系・警告)', () => {
     expect(warnings.some((w) => w.includes('都道府県が空'))).toBe(true)
   })
 
+  it('formula injection: = + - @ 始まりの文字列セルを serialize で無害化する', () => {
+    const master = {
+      prefs: ['北海道', '青森県'],
+      cities: { 北海道: '=cmd|calc', 青森県: '@SUM(A1)' },
+      distanceKm: { [distanceKey('北海道', '青森県')]: 440 },
+    }
+    const out = serializeDistanceCsv(master).replace('﻿', '')
+    // 危険な先頭文字のセルは ' 前置される
+    expect(out).toContain("'=cmd|calc")
+    expect(out).toContain("'@SUM(A1)")
+    expect(out).not.toContain(',=cmd|calc')
+    // 通常の県名/数値はそのまま
+    expect(out).toContain('北海道')
+    expect(out).toContain('440')
+  })
+
   it('未登録ペアは serialize で空セルになる', () => {
     const master = {
       prefs: ['北海道', '青森県'],
