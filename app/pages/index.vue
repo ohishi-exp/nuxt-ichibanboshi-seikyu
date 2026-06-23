@@ -326,6 +326,25 @@ const dieselFormPrice = ref<number | null>(null)
 const dieselRowState = ref<'idle' | 'saving' | 'error'>('idle')
 const dieselRowMsg = ref('')
 
+// 週次 全国平均 (検算用)。月次平均が妥当か人が確認できるよう、取込時に保存した週次を月別に表示。
+const dieselWeekly = ref<{ date: string; month: string; price: number }[]>([])
+// 月別グループ (降順)。各月の週次価格 + 単純平均 (= 月次平均の根拠)。
+const dieselWeeklyByMonth = computed(() => {
+  const map = new Map<string, { date: string; price: number }[]>()
+  for (const w of dieselWeekly.value) {
+    const arr = map.get(w.month) ?? []
+    arr.push({ date: w.date, price: w.price })
+    map.set(w.month, arr)
+  }
+  return [...map.entries()]
+    .map(([month, weeks]) => {
+      const sorted = weeks.sort((a, b) => a.date.localeCompare(b.date))
+      const avg = Math.round((sorted.reduce((s, w) => s + w.price, 0) / sorted.length) * 10) / 10
+      return { month, weeks: sorted, avg }
+    })
+    .sort((a, b) => b.month.localeCompare(a.month))
+})
+
 async function loadDieselView() {
   dieselViewState.value = 'loading'
   dieselViewMsg.value = ''
@@ -333,6 +352,15 @@ async function loadDieselView() {
     const csv = await $fetch<string>('/api/diesel-price', { responseType: 'text' })
     // 表示は年月の降順 (新しい月が上)。保存/削除は month キー単位なので並び順は不問。
     dieselEntries.value = parseDieselPriceCsv(csv).entries.sort((a, b) => b.month.localeCompare(a.month))
+    // 週次内訳 (検算用) も取得。未取込なら空 (=従来表示)。失敗は握って月次表示は出す。
+    try {
+      const wk = await $fetch<{ weekly: { date: string; month: string; price: number }[] }>(
+        '/api/diesel-weekly',
+      )
+      dieselWeekly.value = wk.weekly
+    } catch {
+      dieselWeekly.value = []
+    }
     dieselViewState.value = 'done'
     if (dieselEntries.value.length === 0) dieselViewMsg.value = '登録なし (まだ登録されていません)'
   } catch (err: unknown) {
@@ -952,6 +980,31 @@ watch(
             </tr>
           </tbody>
         </table>
+
+        <h3 class="view-title">週次内訳 (検算)</h3>
+        <p class="lead-note">
+          月次平均の根拠となる週次 全国平均です。各月の「月平均」が上の登録値と一致するか確認できます。
+          週次は「経産省から取込」/ cron 実行時に保存されます (手入力月・未取込月は表示されません)。
+        </p>
+        <p v-if="dieselViewState === 'done' && dieselWeeklyByMonth.length === 0" class="lead-note">
+          週次データなし — 「詳細 / 開発者向け」→「経産省から取込」で直近 24 ヶ月の週次が保存されます。
+        </p>
+        <table v-else-if="dieselViewState === 'done'" class="grid">
+          <thead>
+            <tr><th>年月</th><th>週次 全国平均 (調査日: 円/L)</th><th>月平均 (円/L)</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in dieselWeeklyByMonth" :key="m.month">
+              <td>{{ m.month }}</td>
+              <td>
+                <span v-for="w in m.weeks" :key="w.date" class="weekly-cell">
+                  {{ w.date.slice(5) }}: {{ w.price }}
+                </span>
+              </td>
+              <td class="num">{{ m.avg }}</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <!-- 届出書 (届出用紙)。印刷 → PDF 保存 -->
@@ -1464,6 +1517,16 @@ nav {
 }
 .adv-note {
   margin-top: 0.75rem;
+}
+/* 週次内訳セル: 調査日:価格 を折り返しチップ表示 */
+.weekly-cell {
+  display: inline-block;
+  margin: 0.1rem 0.4rem 0.1rem 0;
+  padding: 0.05rem 0.4rem;
+  background: #f3f4f6;
+  border-radius: 0.25rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 .notification-doc {
   border: 1px solid #e5e7eb;

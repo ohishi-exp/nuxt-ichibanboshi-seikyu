@@ -21,12 +21,45 @@ const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30) // serial 0 = 1899-12-30 (Excel 19
  * (serial >= 61 で 1900-02-29 バグ域を超えるため週次調査日には影響しない)
  */
 export function excelSerialToMonth(serial: number): string | null {
+  const d = excelSerialToDate(serial)
+  return d === null ? null : d.slice(0, 7)
+}
+
+/** Excel シリアル日付 → "YYYY-MM-DD"。範囲外/非有限は null */
+export function excelSerialToDate(serial: number): string | null {
   if (!Number.isFinite(serial) || serial < 1) return null
   const d = new Date(EXCEL_EPOCH_MS + Math.round(serial) * 86400000)
   if (Number.isNaN(d.getTime())) return null
   const y = d.getUTCFullYear()
   const m = d.getUTCMonth() + 1
-  return `${y}-${String(m).padStart(2, '0')}`
+  const day = d.getUTCDate()
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+/** 週次 全国平均 1 行 (検算用の生データ) */
+export interface WeeklyDieselPrice {
+  /** 調査日 YYYY-MM-DD */
+  date: string
+  /** 帰属月 YYYY-MM */
+  month: string
+  /** 全国平均価格 (円/L) */
+  price: number
+}
+
+/** 「軽油」シートの数値行を週次レコードに parse する (内部共有、調査日昇順ではない) */
+function parseWeeklyRows(aoa: unknown[][]): WeeklyDieselPrice[] {
+  const out: WeeklyDieselPrice[] = []
+  for (let r = DATA_START_ROW; r < aoa.length; r++) {
+    const row = aoa[r]
+    if (!row) continue
+    const serial = Number(row[DATE_COL])
+    const price = Number(row[NATIONAL_COL])
+    if (!Number.isFinite(serial) || !Number.isFinite(price) || price <= 0) continue
+    const date = excelSerialToDate(serial)
+    if (date === null) continue
+    out.push({ date, month: date.slice(0, 7), price })
+  }
+  return out
 }
 
 export interface ExtractOptions {
@@ -34,6 +67,26 @@ export interface ExtractOptions {
   recentMonths?: number
   /** 月次平均の小数桁数 (既定 1) */
   decimals?: number
+}
+
+/** 直近 N ヶ月の month 集合に絞る (純粋)。recentMonths 未指定なら全件 */
+function sliceRecentMonths<T extends { month: string }>(rows: T[], recentMonths?: number): T[] {
+  if (recentMonths === undefined || recentMonths <= 0) return rows
+  const months = [...new Set(rows.map((x) => x.month))].sort()
+  const keep = new Set(months.slice(-recentMonths))
+  return rows.filter((x) => keep.has(x.month))
+}
+
+/**
+ * 「軽油」シート (array-of-arrays) から全国平均の週次値を返す (検算表示用)。
+ * 調査日昇順。recentMonths 指定時は直近 N ヶ月の週のみ。
+ */
+export function extractWeeklyDieselPrices(
+  aoa: unknown[][],
+  opts: { recentMonths?: number } = {},
+): WeeklyDieselPrice[] {
+  const weekly = parseWeeklyRows(aoa).sort((a, b) => a.date.localeCompare(b.date))
+  return sliceRecentMonths(weekly, opts.recentMonths)
 }
 
 /**
@@ -47,18 +100,11 @@ export function extractMonthlyDieselAverages(
   const decimals = opts.decimals ?? 1
   const sums = new Map<string, { sum: number; count: number }>()
 
-  for (let r = DATA_START_ROW; r < aoa.length; r++) {
-    const row = aoa[r]
-    if (!row) continue
-    const serial = Number(row[DATE_COL])
-    const price = Number(row[NATIONAL_COL])
-    if (!Number.isFinite(serial) || !Number.isFinite(price) || price <= 0) continue
-    const month = excelSerialToMonth(serial)
-    if (month === null) continue
-    const cur = sums.get(month) ?? { sum: 0, count: 0 }
-    cur.sum += price
+  for (const w of parseWeeklyRows(aoa)) {
+    const cur = sums.get(w.month) ?? { sum: 0, count: 0 }
+    cur.sum += w.price
     cur.count += 1
-    sums.set(month, cur)
+    sums.set(w.month, cur)
   }
 
   const factor = 10 ** decimals
