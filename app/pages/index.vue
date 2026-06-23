@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { parseDistanceCsv, distanceKey, type DistanceMaster } from '../../src/distance'
 import { parseFuelEfficiencyCsv, type FuelEfficiencyEntry } from '../../src/fuel-efficiency'
+import {
+  generateIncrementTable,
+  TIME_BASED_DISTANCES,
+  NOTIFICATION_BASE_PRICE,
+  NOTIFICATION_PRICE_STEP,
+} from '../../src/notification-form'
 
 // 認証 gate は app/plugins/auth.client.ts (initAuthSession) が担う。
 // 未認証ならこのページに到達する前に auth-worker ログインへ redirect される。
@@ -9,15 +15,26 @@ const config = useRuntimeConfig()
 const authWorkerUrl = config.public.authWorkerUrl as string
 
 // --- サイドバー (nuxt_dtako_logs ライクの左ナビ形式) ---
-type Section = 'distance' | 'fuel' | 'review' | 'settings'
+type Section = 'distance' | 'fuel' | 'notification' | 'review' | 'settings'
 const active = ref<Section>('distance')
 const nav: { key: Section; label: string; group: string }[] = [
   { key: 'distance', label: '県庁間距離マスタ', group: 'マスタ' },
   { key: 'fuel', label: '燃費マスタ', group: 'マスタ' },
+  { key: 'notification', label: '届出書', group: '帳票' },
   { key: 'review', label: '明細・集計', group: '確認' },
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
 ]
 const groups = [...new Set(nav.map((n) => n.group))]
+
+// --- 届出書 (届出用紙)。段階上昇額テーブル + 時間制平均距離 + 燃費マスタ現在値。Refs #11-B ---
+const incrementTable = generateIncrementTable()
+const timeBasedDistances = TIME_BASED_DISTANCES
+const notifBasePrice = NOTIFICATION_BASE_PRICE
+const notifPriceStep = NOTIFICATION_PRICE_STEP
+function onPrintNotification() {
+  // 印刷ダイアログ → 「PDF に保存」。@media print で届出書だけを出す。
+  window.print()
+}
 
 // --- 登録内容の表示 (アップロード結果の確認用)。GET CSV → 既存 parser で復元 ---
 type ViewState = 'idle' | 'loading' | 'done' | 'error'
@@ -256,6 +273,8 @@ watch(
       if (fuelViewState.value === 'idle') void loadFuelView()
       if (!vehiclesLoaded.value) void loadVehicles()
     }
+    // 届出書も燃費マスタ現在値を載せるため fuel を読む
+    if (sec === 'notification' && fuelViewState.value === 'idle') void loadFuelView()
   },
   { immediate: true },
 )
@@ -443,6 +462,91 @@ watch(
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <!-- 届出書 (届出用紙)。印刷 → PDF 保存 -->
+      <section v-else-if="active === 'notification'" class="card">
+        <div class="doc-actions no-print">
+          <h2>燃料サーチャージ 届出用紙</h2>
+          <button class="btn" @click="onPrintNotification">印刷 / PDF 保存</button>
+        </div>
+        <p class="no-print lead-note">
+          下記をブラウザの印刷ダイアログで「PDF に保存」すると届出用紙 PDF になります。
+          車種別燃費は「燃費マスタ」の現在値を反映します。
+        </p>
+
+        <div class="notification-doc">
+          <h1 class="doc-title">燃料サーチャージ 届出書</h1>
+
+          <h3>1. 前提条件</h3>
+          <table class="doc-table">
+            <tbody>
+              <tr><th>基準価格</th><td>{{ notifBasePrice }} 円/L（石油情報センター 週間統計データ）</td></tr>
+              <tr><th>改定する刻み幅</th><td>{{ notifPriceStep }} 円/L</td></tr>
+              <tr><th>改定条件</th><td>刻み幅 {{ notifPriceStep.toFixed(2) }} 円/L の幅で軽油価格が変動した時点で、翌月から改定</td></tr>
+              <tr><th>廃止条件</th><td>軽油価格が {{ notifBasePrice.toFixed(2) }} 円/L を下回った時点で、翌月から廃止</td></tr>
+              <tr><th>端数処理</th><td>円単位に切り上げ</td></tr>
+            </tbody>
+          </table>
+
+          <h3>2. 計算式</h3>
+          <ul class="doc-formula">
+            <li>距離制運賃: 走行距離(km) ÷ 燃費(km/L) × 算出上の燃料価格上昇額(円/L)</li>
+            <li>時間制運賃: 平均走行距離(km) ÷ 燃費(km/L) × 算出上の燃料価格上昇額(円/L)</li>
+          </ul>
+
+          <h3>3. 算出上の燃料価格上昇額（段階方式）</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>適用時の軽油価格 (円/L)</th><th>代表価格</th><th>上昇額 (円/L)</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>～ {{ notifBasePrice }}（基準価格以下）</td>
+                <td>廃止</td>
+                <td>－</td>
+              </tr>
+              <tr v-for="b in incrementTable" :key="b.upperInclusive">
+                <td>{{ b.lowerExclusive }} 超 ～ {{ b.upperInclusive }}</td>
+                <td>{{ b.representative }}</td>
+                <td class="num">{{ b.increment }}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>4. 車種別燃費（km/L）</h3>
+          <table v-if="fuelEntries.length" class="doc-table">
+            <thead>
+              <tr><th>車種C</th><th>車種名</th><th>燃費 (km/L)</th><th>有効開始</th><th>有効終了</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(e, i) in fuelEntries" :key="i">
+                <td>{{ e.sharuC }}</td>
+                <td>{{ e.name }}</td>
+                <td class="num">{{ e.kmPerL }}</td>
+                <td>{{ e.validFrom }}</td>
+                <td>{{ e.validTo ?? '（無期限）' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="doc-empty">
+            燃費マスタ未登録です。「燃費マスタ」で車種別燃費を登録すると本欄に反映されます。
+          </p>
+
+          <h3>5. 時間制運賃の 1 日当たり平均走行距離（km）</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>車種</th><th>8 時間制</th><th>4 時間制</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in timeBasedDistances" :key="d.category">
+                <td>{{ d.category }}</td>
+                <td class="num">{{ d.h8 }}</td>
+                <td class="num">{{ d.h4 }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- 確認 UI (placeholder) -->
@@ -712,6 +816,96 @@ nav {
   }
   .content {
     padding: 1.25rem;
+  }
+}
+
+/* --- 届出書 (届出用紙) --- */
+.doc-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.lead-note {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin: 0.25rem 0 1rem;
+}
+.notification-doc {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 1.5rem 1.75rem;
+  background: #fff;
+}
+.doc-title {
+  font-size: 1.4rem;
+  text-align: center;
+  margin: 0 0 1.25rem;
+}
+.notification-doc h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+  border-left: 4px solid #2563eb;
+  padding-left: 0.5rem;
+}
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.doc-table th,
+.doc-table td {
+  border: 1px solid #d1d5db;
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+}
+.doc-table thead th {
+  background: #f3f4f6;
+  text-align: center;
+}
+.doc-table td.num {
+  text-align: right;
+}
+.doc-formula {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+}
+.doc-empty {
+  font-size: 0.85rem;
+  color: #b45309;
+}
+
+/* 印刷: 届出書だけを A4 に出す (サイドバー・ボタン・操作系は隠す) */
+@media print {
+  .sidebar,
+  .no-print {
+    display: none !important;
+  }
+  .shell,
+  .content {
+    display: block;
+    padding: 0;
+    background: #fff;
+  }
+  .card {
+    border: 0;
+    padding: 0;
+    background: #fff;
+    max-width: none;
+  }
+  .notification-doc {
+    border: 0;
+    padding: 0;
+  }
+  .doc-table th,
+  .doc-table td {
+    border: 1px solid #999;
+  }
+  @page {
+    size: A4;
+    margin: 14mm;
   }
 }
 </style>
