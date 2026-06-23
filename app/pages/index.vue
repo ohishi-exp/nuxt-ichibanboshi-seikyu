@@ -6,6 +6,7 @@ import { computeSurcharge, type SurchargeMasters, type SurchargeResult } from '.
 import { mapToMeisaiRows, type IchibanSurchargeRow } from '../../src/surcharge-review'
 import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
 import { SHIMEBI_DETAIL_PAYLOAD_KEY } from '../../src/shimebi-detail-key'
+import { buildShimebiCsv } from '../../src/shimebi-csv'
 import {
   generateIncrementTable,
   TIME_BASED_DISTANCES,
@@ -766,6 +767,20 @@ async function onToggleShimebiRegister(row: ShimebiCustomerRow) {
   }
 }
 
+// 締め日別 得意先別サーチャージを CSV ダウンロード (一番星 手動入力の元票)。Refs #6
+// 文字コードは UTF-8 BOM (Excel/一番星取込を考慮)。サーチャージ 0 の取引先は出さない。
+function onExportShimebiCsv() {
+  if (!import.meta.client || shimebiRows.value.length === 0) return
+  const csv = buildShimebiCsv(shimebiRows.value, shimebiDate.value)
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `surcharge_${shimebiDate.value || 'export'}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // セクションを開いた時に未読込なら現在の登録内容を自動表示する。
 watch(
   active,
@@ -1328,6 +1343,10 @@ watch(
         <p v-else-if="shimebiState === 'error'" class="status err">{{ shimebiMsg }}</p>
         <template v-if="shimebiState === 'done'">
           <p v-if="shimebiMsg" class="status">{{ shimebiMsg }}</p>
+          <div v-if="shimebiRows.length" class="actions">
+            <button class="btn" @click="onExportShimebiCsv">CSV 出力 (一番星 手動入力用)</button>
+            <span class="lead-note">サーチャージ &gt; 0 の取引先のみ・品名「{{ '燃料サーチャージ' }}」(暫定)・UTF-8 BOM</span>
+          </div>
           <div :class="['shimebi-layout', shimebiDetailMode === 'right' && shimebiDetailCode ? 'is-right' : '']">
             <div class="shimebi-list">
           <table v-if="shimebiRows.length" class="grid">
