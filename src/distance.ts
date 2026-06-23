@@ -127,16 +127,24 @@ export function parseDistanceCsv(csv: string): ParseDistanceResult {
   return { master: { prefs, cities, distanceKm }, warnings }
 }
 
+// CSV / formula injection 対策 (OWASP)。先頭が = + - @ TAB CR のセルは ' を前置し、
+// download した CSV を Excel/Sheets で開いた時に数式として実行されるのを防ぐ。
+// アップロード由来の city / 県名が悪意ある値でも download 側で無害化する。
+function csvSafe(cell: string): string {
+  return /^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell
+}
+
 /**
  * DistanceMaster を CSV 文字列へ serialize する (download 用、UTF-8 BOM 付き)。
- * parseDistanceCsv と round-trip 一致する。自県は 0、未登録ペアは空セル。
+ * parseDistanceCsv と round-trip 一致する (正常値)。自県は 0、未登録ペアは空セル。
+ * 文字列セル (県名 / 県庁所在地) は formula injection 対策で csvSafe する。
  */
 export function serializeDistanceCsv(master: DistanceMaster): string {
   const { prefs, cities, distanceKm } = master
   const lines: string[] = []
-  lines.push(['都道府県', '県庁所在地', ...prefs].join(','))
+  lines.push(['都道府県', '県庁所在地', ...prefs].map(csvSafe).join(','))
   for (const from of prefs) {
-    const row = [from, cities[from] ?? '']
+    const row = [csvSafe(from), csvSafe(cities[from] ?? '')]
     for (const to of prefs) {
       if (from === to) {
         row.push('0')
