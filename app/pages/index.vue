@@ -367,6 +367,38 @@ async function onDeleteDiesel(month: string) {
   }
 }
 
+// 経産省公表値の自動取得 probe (Phase 1: Worker から到達できるか確認)。Refs #11 (#2)
+interface DieselProbeResult {
+  ok: boolean
+  status?: number
+  contentType?: string
+  bytes?: number
+  url?: string
+  links?: string[]
+  reason?: string
+  message?: string
+}
+const probeUrl = ref('')
+const probeState = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+const probeResult = ref<DieselProbeResult | null>(null)
+const probeErr = ref('')
+
+async function onDieselProbe() {
+  probeState.value = 'running'
+  probeErr.value = ''
+  probeResult.value = null
+  try {
+    const res = await $fetch<DieselProbeResult>('/api/diesel-fetch', {
+      query: probeUrl.value ? { url: probeUrl.value } : {},
+    })
+    probeResult.value = res
+    probeState.value = 'done'
+  } catch (err: unknown) {
+    probeState.value = 'error'
+    probeErr.value = err instanceof Error ? err.message : 'probe に失敗しました'
+  }
+}
+
 // --- D1 スキーマ初期化 (wrangler d1 migrations apply の代わり)。Refs #11 ---
 type MigrateState = 'idle' | 'running' | 'done' | 'error'
 const migrateState = ref<MigrateState>('idle')
@@ -630,6 +662,40 @@ watch(
           <li v-for="(w, i) in dieselUploadWarnings.slice(0, 20)" :key="i">{{ w }}</li>
           <li v-if="dieselUploadWarnings.length > 20">…他 {{ dieselUploadWarnings.length - 20 }} 件</li>
         </ul>
+
+        <h3 class="view-title">経産省から自動取得 (probe)</h3>
+        <p class="lead-note">
+          資源エネルギー庁の公表ページ/ファイルへ Worker から到達できるか確認します
+          (Phase 1)。到達できれば次段で月次平均を parse して自動 upsert します。URL 空欄なら
+          石油製品価格調査の結果ページを対象にします。
+        </p>
+        <div class="actions">
+          <input
+            v-model="probeUrl"
+            class="cell-edit"
+            style="min-width: 22rem"
+            placeholder="https://www.enecho.meti.go.jp/.../results.html (空欄で既定)"
+          />
+          <button class="btn" :disabled="probeState === 'running'" @click="onDieselProbe">
+            到達確認
+          </button>
+        </div>
+        <p v-if="probeState === 'running'" class="status">取得中…</p>
+        <p v-else-if="probeState === 'error'" class="status err">{{ probeErr }}</p>
+        <div v-else-if="probeState === 'done' && probeResult" class="probe-result">
+          <p class="status" :class="probeResult.ok ? 'ok' : 'err'">
+            {{ probeResult.ok ? '到達 OK' : '到達 NG' }} —
+            status {{ probeResult.status ?? probeResult.reason }} /
+            {{ probeResult.contentType }} / {{ probeResult.bytes }} bytes
+          </p>
+          <p v-if="probeResult.message" class="status err">{{ probeResult.message }}</p>
+          <template v-if="probeResult.links && probeResult.links.length">
+            <p class="lead-note">見つかったデータファイル候補 (.xlsx/.xls/.csv):</p>
+            <ul class="warnings">
+              <li v-for="(l, i) in probeResult.links" :key="i">{{ l }}</li>
+            </ul>
+          </template>
+        </div>
 
         <h3 class="view-title">新規登録</h3>
         <form class="row-form" @submit.prevent="onAddDiesel">
