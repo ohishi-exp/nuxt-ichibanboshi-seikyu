@@ -36,6 +36,17 @@ export interface MeisaiRow {
   seikyuDate: string
 }
 
+/**
+ * 車種別燃費 km/L の引き方。
+ * - `Record<車種C, number>`: 期間を問わない単一値 (簡易・テスト用)
+ * - 関数: (車種C, 売上年月日 YYYY-MM-DD) → km/L。有効期間つきマスタ
+ *   (src/fuel-efficiency.ts の `toEfficiencyLookup`) を渡す本番経路
+ * いずれも未定義 or 0 以下 → 警告 (未計上)。
+ */
+export type FuelEfficiencyLookup =
+  | Record<string, number>
+  | ((sharuC: string, date: string) => number | undefined)
+
 export interface SurchargeMasters {
   /** 基準燃料価格 (全社共通) */
   basePrice: number
@@ -43,8 +54,8 @@ export interface SurchargeMasters {
   priceStep?: number
   /** "YYYY-MM" -> 当月全国平均軽油価格。無ければ当月価格なし → 警告 */
   monthlyDieselPrice: Record<string, number>
-  /** 車種C -> 燃費 km/L。未定義 or 0 以下 → 警告 */
-  fuelEfficiency: Record<string, number>
+  /** 車種別燃費 km/L (単一値 Record か、有効期間つき lookup 関数)。未定義 or 0 以下 → 警告 */
+  fuelEfficiency: FuelEfficiencyLookup
   /**
    * 県庁間距離 km。キーは `積地県\t卸地県`。
    * 同県は 0 (km=0 → 額0)、未登録は警告。距離は対称とみなし逆順キーも参照する。
@@ -136,7 +147,10 @@ export function computeRowSurcharge(
     }
   }
 
-  const efficiency = m.fuelEfficiency[row.sharuC]
+  const efficiency =
+    typeof m.fuelEfficiency === 'function'
+      ? m.fuelEfficiency(row.sharuC, row.uriageDate)
+      : m.fuelEfficiency[row.sharuC]
   if (efficiency === undefined || efficiency <= 0) {
     return {
       row,
