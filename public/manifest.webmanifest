@@ -1,0 +1,20 @@
+{
+  "name": "一番星 燃料サーチャージ請求",
+  "short_name": "一番星請求",
+  "description": "一番星 燃料サーチャージの確認・計算・表示",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1f3a",
+  "theme_color": "#0b1f3a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
