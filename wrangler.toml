@@ -7,6 +7,10 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = ".output/public"
 
+# Workers Logs を有効化 (proxy の上流 status 等を observability で確認するため)。
+[observability]
+enabled = true
+
 # single-env (staging = prod)。PR を上げると CI がこの live worker に deploy する。
 [[routes]]
 pattern = "ichibanboshi-seikyu.ippoan.org"
