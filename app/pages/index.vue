@@ -129,11 +129,37 @@ const formValidFrom = ref('')
 const formValidTo = ref('')
 const rowState = ref<'idle' | 'saving' | 'error'>('idle')
 const rowMsg = ref('')
+const rowSavedMsg = ref('')
 
 // 車種選択で車種名を自動補完 (ドロップダウン使用時)
 function onSelectVehicle() {
   const v = vehicles.value.find((x) => x.vehicle_code === formSharuC.value)
   if (v) formName.value = v.vehicle_name
+}
+
+// 既存行のインライン編集を保存 (PK = 車種C×有効開始 は不変なので upsert で置換)
+async function onSaveRow(e: FuelEfficiencyEntry) {
+  rowState.value = 'saving'
+  rowMsg.value = ''
+  rowSavedMsg.value = ''
+  try {
+    await $fetch('/api/fuel-efficiency-row', {
+      method: 'POST',
+      body: {
+        sharuC: e.sharuC,
+        name: e.name,
+        kmPerL: e.kmPerL,
+        validFrom: e.validFrom,
+        validTo: e.validTo ?? '',
+      },
+    })
+    rowState.value = 'idle'
+    rowSavedMsg.value = `保存しました: ${e.sharuC} (${e.validFrom})`
+    await loadFuelView()
+  } catch (err: unknown) {
+    rowState.value = 'error'
+    rowMsg.value = err instanceof Error ? err.message : '保存に失敗しました'
+  }
 }
 
 async function onAddRow() {
@@ -438,6 +464,10 @@ watch(
         <p v-if="fuelViewState === 'loading'" class="status">読込中…</p>
         <p v-else-if="fuelViewState === 'error'" class="status err">{{ fuelViewMsg }}</p>
         <p v-else-if="fuelViewMsg" class="status">{{ fuelViewMsg }}</p>
+        <p class="lead-note">
+          車種名・燃費・有効終了は直接編集して「保存」で更新できます（車種C・有効開始は
+          キーのため変更不可。変えたい場合は削除して新規登録）。
+        </p>
         <table v-if="fuelViewState === 'done' && fuelEntries.length" class="grid">
           <thead>
             <tr>
@@ -450,18 +480,31 @@ watch(
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(e, i) in fuelEntries" :key="i">
+            <tr v-for="(e, i) in fuelEntries" :key="`${e.sharuC}\t${e.validFrom}`">
               <td>{{ e.sharuC }}</td>
-              <td>{{ e.name }}</td>
-              <td class="num">{{ e.kmPerL }}</td>
-              <td>{{ e.validFrom }}</td>
-              <td>{{ e.validTo ?? '（無期限）' }}</td>
+              <td><input v-model="e.name" class="cell-edit" /></td>
               <td>
+                <input
+                  v-model.number="e.kmPerL"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  class="cell-edit num"
+                />
+              </td>
+              <td>{{ e.validFrom }}</td>
+              <td><input v-model="e.validTo" type="date" class="cell-edit" /></td>
+              <td class="row-ops">
+                <button class="link-save" :disabled="rowState === 'saving'" @click="onSaveRow(e)">
+                  保存
+                </button>
                 <button class="link-del" @click="onDeleteRow(e.sharuC, e.validFrom)">削除</button>
               </td>
             </tr>
           </tbody>
         </table>
+        <p v-if="rowState === 'error'" class="status err">{{ rowMsg }}</p>
+        <p v-else-if="rowSavedMsg" class="status ok">{{ rowSavedMsg }}</p>
       </section>
 
       <!-- 届出書 (届出用紙)。印刷 → PDF 保存 -->
@@ -773,6 +816,32 @@ nav {
   cursor: pointer;
   font-size: 0.8rem;
   text-decoration: underline;
+}
+.link-save {
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-decoration: underline;
+}
+.row-ops {
+  display: flex;
+  gap: 0.6rem;
+  white-space: nowrap;
+}
+.cell-edit {
+  width: 100%;
+  min-width: 5rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.25rem;
+  font-size: 0.82rem;
+  box-sizing: border-box;
+}
+.cell-edit.num {
+  text-align: right;
+  min-width: 4rem;
 }
 .matrix-scroll {
   max-height: 460px;
