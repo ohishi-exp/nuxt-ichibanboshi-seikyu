@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mapToMeisaiRows, type IchibanSurchargeRow } from '../src/surcharge-review'
+import { mapToMeisaiRows, ownershipLabel, type IchibanSurchargeRow } from '../src/surcharge-review'
 import { computeSurcharge, type SurchargeMasters } from '../src/surcharge'
 import { toEfficiencyLookup, parseFuelEfficiencyCsv } from '../src/fuel-efficiency'
 import { toMonthlyPriceMap, parseDieselPriceCsv } from '../src/diesel-price'
@@ -53,6 +53,24 @@ describe('mapToMeisaiRows', () => {
 
   it('空配列', () => {
     expect(mapToMeisaiRows([])).toEqual([])
+  })
+
+  it('傭車先C (subcontractor_code) を subcontractorCode に写像', () => {
+    const rows: IchibanSurchargeRow[] = [{ ...ROWS[0]!, subcontractor_code: '001234' }]
+    expect(mapToMeisaiRows(rows)[0]?.subcontractorCode).toBe('001234')
+  })
+})
+
+describe('ownershipLabel (自車/傭車)', () => {
+  it("'000000' は自車", () => {
+    expect(ownershipLabel('000000')).toBe('自車')
+  })
+  it('それ以外のコードは傭車', () => {
+    expect(ownershipLabel('001234')).toBe('傭車')
+  })
+  it('空 / undefined (producer 旧版) は —', () => {
+    expect(ownershipLabel('')).toBe('—')
+    expect(ownershipLabel(undefined)).toBe('—')
   })
 })
 

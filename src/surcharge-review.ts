@@ -18,6 +18,8 @@ export interface IchibanSurchargeRow {
   sale_date: string
   fare: number
   billing_date: string | null
+  /** 傭車先C ('000000' なら自車)。producer 旧版では欠落し得るため optional */
+  subcontractor_code?: string
 }
 
 /** 一番星 SurchargeRow[] → MeisaiRow[] (純粋)。請求日 null は空文字 (= 集計キーで空扱い) */
@@ -31,5 +33,15 @@ export function mapToMeisaiRows(rows: IchibanSurchargeRow[]): MeisaiRow[] {
     uriageDate: r.sale_date,
     unchin: r.fare,
     seikyuDate: r.billing_date ?? '',
+    subcontractorCode: r.subcontractor_code,
   }))
+}
+
+/**
+ * 傭車先C から自車/傭車区分を返す (純粋)。
+ * '000000' (6 桁ゼロ) → 自車、空/undefined (producer 旧版) → '—'、それ以外 → 傭車。
+ */
+export function ownershipLabel(subcontractorCode?: string): '自車' | '傭車' | '—' {
+  if (subcontractorCode === undefined || subcontractorCode === '') return '—'
+  return subcontractorCode === '000000' ? '自車' : '傭車'
 }

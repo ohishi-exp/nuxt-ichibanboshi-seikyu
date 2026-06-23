@@ -2,6 +2,7 @@
 // 締め日別 取引先の「明細 + 計算根拠」表。締め日別画面 (下/右/モーダル) と
 // 別タブページ (pages/shimebi-detail.vue) で共有する。Refs #11
 import type { SurchargeResult } from '../../src/surcharge'
+import { ownershipLabel } from '../../src/surcharge-review'
 
 const props = defineProps<{
   code: string
@@ -29,7 +30,7 @@ function dieselPriceForRow(uriageDate: string): number | null {
     <table class="grid">
       <thead>
         <tr>
-          <th>売上日</th><th>積地</th><th>卸地</th><th>車種</th><th>運賃</th>
+          <th>売上日</th><th>区分</th><th>積地</th><th>卸地</th><th>車種</th><th>運賃</th>
           <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
           <th>燃費 (km/L)</th><th>サーチャージ (円)</th><th>状態</th>
         </tr>
@@ -37,6 +38,7 @@ function dieselPriceForRow(uriageDate: string): number | null {
       <tbody>
         <tr v-for="(d, i) in rows" :key="i">
           <td>{{ d.row.uriageDate }}</td>
+          <td>{{ ownershipLabel(d.row.subcontractorCode) }}</td>
           <td>{{ d.row.fromPref }}</td>
           <td>{{ d.row.toPref }}</td>
           <td>{{ d.row.sharuC }}</td>
