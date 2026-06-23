@@ -11,6 +11,12 @@ directory = ".output/public"
 [observability]
 enabled = true
 
+# 軽油価格 自動取込 cron。水曜 14:05/14:15/14:25 JST (= UTC 05:05/05:15/05:25)。
+# nuxt.config の nitro.scheduledTasks と同式。公表直後に最大 3 回叩き、新ファイルが
+# 出た 1 回だけ取込 + LINE WORKS 通知 (取得後不要 = diesel_import_state の dedup)。
+[triggers]
+crons = ["5,15,25 5 * * 3"]
+
 # single-env (staging = prod)。PR を上げると CI がこの live worker に deploy する。
 [[routes]]
 pattern = "ichibanboshi-seikyu.ippoan.org"
@@ -31,6 +37,17 @@ NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 # CF_ACCESS_CLIENT_ID は公開識別子なので plain var、secret は下の binding。
 ICHIBAN_API_BASE = "https://rust-ichiban.mtamaramu.com"
 CF_ACCESS_CLIENT_ID = "824a8b3c7042c7040924f38797a832f7.access"
+
+# 軽油価格 自動取込 cron 完了後の LINE WORKS bot 通知 (Refs #11 #2)。
+# bot_id / client_id / service_account / 送信先は識別子なので plain var、
+# client_secret と private_key (PKCS#8 PEM) は下の Secrets Store binding。
+# どれか欠けると通知は無効 (= 取込は成功扱いを保つ)。未設定でも cron / 取込は動く。
+# 値投入後にこの var を埋める (空文字なら通知 skip)。
+LINEWORKS_BOT_ID = ""
+LINEWORKS_CLIENT_ID = ""
+LINEWORKS_SERVICE_ACCOUNT = ""
+LINEWORKS_TARGET_TYPE = "channel"   # channel (トークルーム) | user
+LINEWORKS_TARGET_ID = ""
 
 # auth-worker のブラウザ JWT (logi_auth_token cookie) を /api/distance で署名検証する
 # ための HS256 鍵 JWT_SECRET。auth-worker / rust-alc-api / hcreader と同じ
@@ -53,6 +70,21 @@ secret_name = "JWT_SECRET"
 binding = "CF_ACCESS_CLIENT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "CF_ACCESS_CLIENT_SECRET"
+
+# --- LINE WORKS bot 通知 (cron 完了通知、Refs #11 #2) ---
+# bot を provisioning し、GCP cloudsql-sv + CF Secrets Store に下記 2 secret を
+# 投入してから (secret-inject skill)、以下の 2 binding を有効化する。
+# 先に宣言すると secret-verify が GCP に無い secret を見て CI fail するため、
+# provisioning 完了まではコメントアウトしておく (通知コードは binding 不在で自動 skip)。
+# [[secrets_store_secrets]]
+# binding = "LINEWORKS_CLIENT_SECRET"
+# store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+# secret_name = "LINEWORKS_CLIENT_SECRET"
+#
+# [[secrets_store_secrets]]
+# binding = "LINEWORKS_PRIVATE_KEY"            # PKCS#8 PEM (PKCS#1 は convert_secret_pkcs8 で変換)
+# store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+# secret_name = "LINEWORKS_PRIVATE_KEY"
 
 # 県庁間距離マスタ等の D1 (距離制サーチャージ)。Refs #11
 # データ投入は seed migration ではなく Excel→CSV upload (= 画面の CSV アップロード)。

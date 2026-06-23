@@ -17,6 +17,15 @@ export default defineNuxtConfig({
 
   nitro: {
     preset: 'cloudflare_module',
+    // 軽油価格 自動取込 cron。水曜 14:05/14:15/14:25 JST (= 05:05/05:15/05:25 UTC)。
+    // 公表 (毎週水曜 14:00) 直後に最大 3 回叩き、新ファイルが出た 1 回だけ取込 + 通知
+    // (取得後不要 = diesel_import_state の dedup)。実 cron トリガーは wrangler.toml の
+    // [triggers] crons にも同じ式を宣言する (両方必要)。
+    experimental: { tasks: true },
+    scheduledTasks: {
+      // task 名は server/tasks/ からのパス由来 (server/tasks/diesel-import.ts → 'diesel-import')。
+      '5,15,25 5 * * 3': ['diesel-import'],
+    },
   },
 
   // lib は .vue/.ts をそのまま ship するので consumer 側で transpile する。
