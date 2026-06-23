@@ -19,12 +19,14 @@ NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 
 # 一番星 (rust-ichibanboshi) 連携 — 燃費マスタの車種ドロップダウンを
 # GET /api/vehicles (車種ﾏｽﾀ) で取得する。rust-ichiban.mtamaramu.com は
-# Cloudflare Access (Service Token) 保護なので CF-Access-Client-Id/Secret を付けて呼ぶ。
-# 下記が揃うまで /api/vehicles は 503 を返し、UI は車種C 手入力にフォールバックする。
-#   ICHIBAN_API_BASE    = "https://rust-ichiban.mtamaramu.com"
-#   CF_ACCESS_CLIENT_ID = "<seikyu 用 service token の client id (.access)>"
-# CF_ACCESS_CLIENT_SECRET は secret のため [[secrets_store_secrets]] で別途 bind する
-# (secret-inject で CF Secrets Store + GCP に投入 → binding 追加 → 有効化)。
+# Cloudflare Access (Service Token) 保護なので CF-Access-Client-Id/Secret を付けて呼ぶ
+# (nuxt-ichibanboshi と同方式)。
+# CF_ACCESS_CLIENT_ID は公開識別子なので plain var。client_id は CI deploy 用に発行済の
+# service token `rust-ichibanboshi-ci-deploy` を再利用する (新規発行しない)。
+# ⚠ このトークンを rust-ichiban.mtamaramu.com の CF Access app の Service Auth 許可
+#    リストに登録しておくこと (未登録だと /api/vehicles が 403)。
+ICHIBAN_API_BASE = "https://rust-ichiban.mtamaramu.com"
+CF_ACCESS_CLIENT_ID = "824a8b3c7042c7040924f38797a832f7.access"
 
 # auth-worker のブラウザ JWT (logi_auth_token cookie) を /api/distance で署名検証する
 # ための HS256 鍵 JWT_SECRET。auth-worker / rust-alc-api / hcreader と同じ
@@ -38,6 +40,14 @@ NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 binding = "JWT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "JWT_SECRET"
+
+# 一番星 CF Access service token の client_secret (CI-deploy トークン再利用)。
+# GCP cloudsql-sv の同名 secret を SoT とし、CF Secrets Store へ sync 済
+# (secrets-inventory sync_from_gcp、secret_id 13965df3...)。secret-verify が GCP で検証する。
+[[secrets_store_secrets]]
+binding = "CF_ACCESS_CLIENT_SECRET"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "CF_ACCESS_CLIENT_SECRET"
 
 # 県庁間距離マスタ等の D1 (距離制サーチャージ)。Refs #11
 # データ投入は seed migration ではなく Excel→CSV upload (= 画面の CSV アップロード)。
