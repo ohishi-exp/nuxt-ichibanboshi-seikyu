@@ -698,6 +698,24 @@ const shimebiDate = ref('') // YYYY-MM-DD (締め日 = 請求日)
 const shimebiState = ref<ViewState>('idle')
 const shimebiMsg = ref('')
 const shimebiRows = ref<ShimebiCustomerRow[]>([])
+// 名前クリックで明細を出すため、締め日一致行の per-row 計算結果と当月軽油価格を保持。
+const shimebiResults = ref<SurchargeResult[]>([])
+const shimebiDieselMap = ref<Record<string, number>>({})
+const shimebiDetailCode = ref<string | null>(null)
+const shimebiDetailRows = computed(() =>
+  shimebiResults.value.filter((r) => r.row.tokuiC === shimebiDetailCode.value),
+)
+const shimebiDetailName = computed(
+  () => shimebiRows.value.find((r) => r.customerCode === shimebiDetailCode.value)?.customerName ?? '',
+)
+function onShowShimebiDetail(code: string) {
+  shimebiDetailCode.value = shimebiDetailCode.value === code ? null : code
+}
+/** 当月軽油価格 (円/L) を行の売上月から引く。無ければ null */
+function dieselPriceForRow(uriageDate: string): number | null {
+  return shimebiDieselMap.value[uriageDate.slice(0, 7)] ?? null
+}
+
 async function onRunShimebi() {
   const date = shimebiDate.value
   if (!date) {
@@ -708,27 +726,37 @@ async function onRunShimebi() {
   shimebiState.value = 'loading'
   shimebiMsg.value = ''
   shimebiRows.value = []
+  shimebiDetailCode.value = null
   try {
     // 一番星 from/to は売上月フィルタ。請求日(入金予定)はその後の月になり得るので、
     // 売上月を広めに取得し、client 側で「請求日 === 締め日」に絞る。
+    // 対象は 請求K 0 と 1 → billing_only(=1) と transport(=0) を取得してマージ
+    // (kind=all は請求K=2 等も含み limit 切れの恐れがあるため使わない)。
     const ym = date.slice(0, 7)
-    const base = await $fetch<{
-      rows: IchibanSurchargeRow[]
-      reason?: string
-      upstreamStatus?: number
-    }>('/api/surcharge-base', {
-      query: { from: shiftMonth(ym, -2), to: shiftMonth(ym, 1), kind: 'billing_only', limit: 10000 },
-    })
-    if (base.reason) {
+    const from = shiftMonth(ym, -2)
+    const to = shiftMonth(ym, 1)
+    const [billing, transport] = await Promise.all([
+      $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
+        '/api/surcharge-base',
+        { query: { from, to, kind: 'billing_only', limit: 10000 } },
+      ),
+      $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
+        '/api/surcharge-base',
+        { query: { from, to, kind: 'transport', limit: 10000 } },
+      ),
+    ])
+    const failed = billing.reason ? billing : transport.reason ? transport : null
+    if (failed) {
       shimebiState.value = 'error'
       shimebiMsg.value =
-        base.reason === 'upstream'
-          ? `一番星が ${base.upstreamStatus} を返しました`
-          : base.reason === 'connect_failed'
+        failed.reason === 'upstream'
+          ? `一番星が ${failed.upstreamStatus} を返しました`
+          : failed.reason === 'connect_failed'
             ? '一番星への接続に失敗しました'
             : '一番星連携が未設定です'
       return
     }
+    const allRows = [...billing.rows, ...transport.rows]
     const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
       $fetch<string>('/api/distance', { responseType: 'text' }),
       $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
@@ -736,16 +764,19 @@ async function onRunShimebi() {
       $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings'),
     ])
     await loadSurchargeCustomers()
+    const dieselMap = toMonthlyPriceMap(parseDieselPriceCsv(dieselCsv).entries)
+    shimebiDieselMap.value = dieselMap
     const masters: SurchargeMasters = {
       basePrice: settings.basePrice,
       priceStep: settings.priceStep,
-      monthlyDieselPrice: toMonthlyPriceMap(parseDieselPriceCsv(dieselCsv).entries),
+      monthlyDieselPrice: dieselMap,
       fuelEfficiency: toEfficiencyLookup(parseFuelEfficiencyCsv(fuelCsv).entries),
       distanceKm: parseDistanceCsv(distCsv).master.distanceKm,
     }
-    const summary = computeSurcharge(mapToMeisaiRows(base.rows), masters)
+    const summary = computeSurcharge(mapToMeisaiRows(allRows), masters)
     // 締め日 (請求日) が一致する行のみ集計
     const onDate = summary.results.filter((r) => (r.row.seikyuDate || '').slice(0, 10) === date)
+    shimebiResults.value = onDate
     shimebiRows.value = aggregateByCustomer(onDate, (code) => registeredCodes.value.has(code))
     shimebiState.value = 'done'
     if (shimebiRows.value.length === 0) {
@@ -1391,9 +1422,10 @@ watch(
         <p class="lead-note">
           締め日 (請求日 / 入金予定日) を指定すると、その締め日に請求のある取引先を取引先コード順に
           一覧します。各取引先の運賃合計・計算サーチャージ・マスタ登録有無・差額を表示し、その場で
-          サーチャージ対象の登録/解除ができます。<br />
-          差額 = 実請求との差。一番星は燃料サーチャージを別建てで返さないため、差額 = 計算サーチャージ
-          (= 現状の請求に未計上で今後請求すべき額) です。
+          サーチャージ対象の登録/解除ができます。<strong>取引先名をクリック</strong>すると明細と計算根拠を表示します。<br />
+          対象は <strong>請求K 0 (通常運送) と 1 (請求のみ)</strong>。差額 = 実請求との差で、一番星は
+          燃料サーチャージを別建てで返さないため 差額 = 計算サーチャージ (= 現状の請求に未計上で今後
+          請求すべき額) です。
         </p>
         <div class="actions">
           <label class="inline-label">
@@ -1423,7 +1455,11 @@ watch(
             <tbody>
               <tr v-for="r in shimebiRows" :key="r.customerCode">
                 <td>{{ r.customerCode }}</td>
-                <td>{{ r.customerName }}</td>
+                <td>
+                  <button class="link-name" @click="onShowShimebiDetail(r.customerCode)">
+                    {{ r.customerName }}
+                  </button>
+                </td>
                 <td class="num">{{ r.fareTotal.toLocaleString() }}</td>
                 <td class="num">{{ r.surchargeTotal.toLocaleString() }}</td>
                 <td>
@@ -1444,6 +1480,44 @@ watch(
               </tr>
             </tbody>
           </table>
+
+          <!-- 取引先 明細 + 計算根拠 (名前クリックで表示) -->
+          <div v-if="shimebiDetailCode" class="detail-panel">
+            <h3 class="view-title">
+              明細・計算根拠 — {{ shimebiDetailCode }} {{ shimebiDetailName }}（締め日 {{ shimebiDate }}）
+            </h3>
+            <p class="lead-note">
+              サーチャージ = 切上(距離 km ÷ 燃費 km/L × 上昇額 円/L)。上昇額は当月軽油価格を段階表に当てた値
+              (基準価格以下は 0)。未計上は距離/当月価格の欠落が理由です。
+            </p>
+            <table class="grid">
+              <thead>
+                <tr>
+                  <th>売上日</th><th>積地→卸地</th><th>車種</th><th>運賃</th>
+                  <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
+                  <th>燃費 (km/L)</th><th>サーチャージ (円)</th><th>状態</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(d, i) in shimebiDetailRows" :key="i">
+                  <td>{{ d.row.uriageDate }}</td>
+                  <td>{{ d.row.fromPref }}→{{ d.row.toPref }}</td>
+                  <td>{{ d.row.sharuC }}</td>
+                  <td class="num">{{ d.row.unchin.toLocaleString() }}</td>
+                  <td class="num">{{ dieselPriceForRow(d.row.uriageDate) ?? '—' }}</td>
+                  <td class="num">{{ d.increment ?? '—' }}</td>
+                  <td class="num">{{ d.km ?? '—' }}</td>
+                  <td class="num">{{ d.efficiency ?? '—' }}</td>
+                  <td class="num">{{ d.amount.toLocaleString() }}</td>
+                  <td>
+                    <span v-if="d.status === 'ok'" class="badge-on">計上</span>
+                    <span v-else-if="d.status === 'warning'" class="warn-note">{{ d.warning }}</span>
+                    <span v-else class="badge-off">対象外</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </template>
       </section>
 
@@ -1798,6 +1872,21 @@ nav {
   margin-left: 0.4rem;
   font-size: 0.75rem;
   color: #b45309;
+}
+/* 締め日別: 取引先名クリックで明細展開 */
+.link-name {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: inherit;
+}
+.detail-panel {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 2px solid #e5e7eb;
 }
 /* 週次内訳セル: 調査日:価格 を折り返しチップ表示 */
 .weekly-cell {
