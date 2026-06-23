@@ -3,6 +3,8 @@ import {
   ENECHO_RESULTS_URL,
   isAllowedSourceUrl,
   extractDataFileLinks,
+  extractPublicationSchedule,
+  type PublicationDate,
 } from '../utils/diesel-fetch'
 
 // GET /api/diesel-fetch?url=... — 経産省 (資源エネルギー庁) 公表ページ/ファイルへ
@@ -46,11 +48,13 @@ export default defineEventHandler(async (event) => {
   const buf = await res.arrayBuffer()
   const bytes = buf.byteLength
 
-  // HTML ならデータファイル link を抽出 (月次平均 xlsx/csv の URL 発見)
+  // HTML ならデータファイル link と公表予定日を抽出
   let links: string[] = []
+  let schedule: PublicationDate[] = []
   if (contentType.includes('html') || contentType.includes('text')) {
     const html = new TextDecoder().decode(buf)
     links = extractDataFileLinks(html, url)
+    schedule = extractPublicationSchedule(html)
   }
 
   return {
@@ -60,5 +64,6 @@ export default defineEventHandler(async (event) => {
     bytes,
     url,
     links, // .xlsx/.xls/.csv の絶対 URL 候補
+    schedule, // 公表予定日 (YYYY-MM-DD / HH:MM / 曜日)
   }
 })

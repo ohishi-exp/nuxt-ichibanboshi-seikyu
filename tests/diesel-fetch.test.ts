@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   isAllowedSourceUrl,
   extractDataFileLinks,
+  extractPublicationSchedule,
   ENECHO_RESULTS_URL,
 } from '../server/utils/diesel-fetch'
 
@@ -48,5 +49,47 @@ describe('extractDataFileLinks', () => {
 
   it('該当なしは空配列', () => {
     expect(extractDataFileLinks('<p>no links</p>', base)).toEqual([])
+  })
+})
+
+describe('extractPublicationSchedule (公表予定日)', () => {
+  // ページ実物は全角括弧・全角コロン・全角数字混在 + 整列用の半角スペース
+  const html = `
+    <h3>公表予定日</h3>
+    <p>
+      6月24日（水）14：00<br>
+      7月　1日（水）14：00<br>
+      7月　8日（水）14：00<br>
+      7月15日（水）14：00<br>
+      ※原則、毎週月曜日調査、水曜日公表
+    </p>
+  `
+
+  it('全角混在を NFKC 正規化して日時を抽出 (年は now から補完)', () => {
+    const now = new Date(Date.UTC(2026, 5, 23)) // 2026-06-23
+    const sched = extractPublicationSchedule(html, now)
+    expect(sched).toEqual([
+      { date: '2026-06-24', time: '14:00', weekday: '水' },
+      { date: '2026-07-01', time: '14:00', weekday: '水' },
+      { date: '2026-07-08', time: '14:00', weekday: '水' },
+      { date: '2026-07-15', time: '14:00', weekday: '水' },
+    ])
+  })
+
+  it('現在月より小さい月は翌年扱い (12月→1月 年跨ぎ)', () => {
+    const now = new Date(Date.UTC(2026, 11, 30)) // 2026-12-30
+    const sched = extractPublicationSchedule('1月7日(水)14:00', now)
+    expect(sched).toEqual([{ date: '2027-01-07', time: '14:00', weekday: '水' }])
+  })
+
+  it('重複は除去、日付昇順', () => {
+    const now = new Date(Date.UTC(2026, 5, 1))
+    const dup = '7月8日(水)14:00 7月8日(水)14:00 6月24日(水)14:00'
+    const sched = extractPublicationSchedule(dup, now)
+    expect(sched.map((s) => s.date)).toEqual(['2026-06-24', '2026-07-08'])
+  })
+
+  it('予定日が無ければ空配列', () => {
+    expect(extractPublicationSchedule('<p>公表予定日は未定です</p>')).toEqual([])
   })
 })

@@ -398,6 +398,11 @@ async function onDieselImport() {
 }
 
 // 経産省公表値の自動取得 probe (Phase 1: Worker から到達できるか確認)。Refs #11 (#2)
+interface PublicationDate {
+  date: string
+  time: string
+  weekday: string
+}
 interface DieselProbeResult {
   ok: boolean
   status?: number
@@ -405,6 +410,7 @@ interface DieselProbeResult {
   bytes?: number
   url?: string
   links?: string[]
+  schedule?: PublicationDate[]
   reason?: string
   message?: string
 }
@@ -794,6 +800,14 @@ watch(
             <p class="lead-note">見つかったデータファイル候補 (.xlsx/.xls/.csv):</p>
             <ul class="warnings">
               <li v-for="(l, i) in probeResult.links" :key="i">{{ l }}</li>
+            </ul>
+          </template>
+          <template v-if="probeResult.schedule && probeResult.schedule.length">
+            <p class="lead-note">公表予定日 (毎週月曜調査・水曜公表):</p>
+            <ul class="warnings">
+              <li v-for="(s, i) in probeResult.schedule" :key="i">
+                {{ s.date }}（{{ s.weekday }}）{{ s.time }}
+              </li>
             </ul>
           </template>
         </div>
