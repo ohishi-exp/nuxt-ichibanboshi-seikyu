@@ -56,7 +56,11 @@ export function parseDistanceCsv(csv: string): ParseDistanceResult {
     return { master: { prefs: [], cities: {}, distanceKm: {} }, warnings: ['空の CSV'] }
   }
 
-  const header = splitCsvLine(lines[0])
+  const headerLine = lines[0]
+  if (headerLine === undefined) {
+    return { master: { prefs: [], cities: {}, distanceKm: {} }, warnings: ['空の CSV'] }
+  }
+  const header = splitCsvLine(headerLine)
   if (header.length < 3) {
     return {
       master: { prefs: [], cities: {}, distanceKm: {} },
@@ -70,7 +74,9 @@ export function parseDistanceCsv(csv: string): ParseDistanceResult {
   const seenRows = new Set<string>()
 
   for (let i = 1; i < lines.length; i++) {
-    const cols = splitCsvLine(lines[i])
+    const line = lines[i]
+    if (line === undefined) continue
+    const cols = splitCsvLine(line)
     const rowPref = cols[0]
     if (!rowPref) {
       warnings.push(`行 ${i + 1}: 都道府県が空`)
@@ -95,6 +101,7 @@ export function parseDistanceCsv(csv: string): ParseDistanceResult {
     }
     for (let j = 0; j < prefs.length; j++) {
       const colPref = prefs[j]
+      if (colPref === undefined) continue
       const raw = dists[j]
       if (raw === undefined || raw === '') {
         warnings.push(`${rowPref}→${colPref}: 距離セルが空`)
