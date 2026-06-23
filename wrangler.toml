@@ -17,6 +17,15 @@ custom_domain = true
 # worker は tenant_id を持たない。
 NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 
+# 一番星 (rust-ichibanboshi) 連携 — 燃費マスタの車種ドロップダウンを
+# GET /api/vehicles (車種ﾏｽﾀ) で取得する。rust-ichiban.mtamaramu.com は
+# Cloudflare Access (Service Token) 保護なので CF-Access-Client-Id/Secret を付けて呼ぶ。
+# 下記が揃うまで /api/vehicles は 503 を返し、UI は車種C 手入力にフォールバックする。
+#   ICHIBAN_API_BASE    = "https://rust-ichiban.mtamaramu.com"
+#   CF_ACCESS_CLIENT_ID = "<seikyu 用 service token の client id (.access)>"
+# CF_ACCESS_CLIENT_SECRET は secret のため [[secrets_store_secrets]] で別途 bind する
+# (secret-inject で CF Secrets Store + GCP に投入 → binding 追加 → 有効化)。
+
 # auth-worker のブラウザ JWT (logi_auth_token cookie) を /api/distance で署名検証する
 # ための HS256 鍵 JWT_SECRET。auth-worker / rust-alc-api / hcreader と同じ
 # CF Secrets Store entry を物理共有 (Refs HealthConnectReaderWorker#15)。

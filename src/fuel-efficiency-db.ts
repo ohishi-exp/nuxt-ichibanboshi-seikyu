@@ -69,6 +69,31 @@ export async function loadFuelEfficiency(db: D1Database): Promise<FuelEfficiency
   return rowsToEntries(res.results)
 }
 
+/** 燃費 1 行を upsert する (新規登録 行機能)。PK (sharu_c, valid_from) で後勝ち置換 */
+export async function upsertFuelEntry(
+  db: D1Database,
+  entry: FuelEfficiencyEntry,
+): Promise<void> {
+  await db
+    .prepare(
+      'INSERT OR REPLACE INTO fuel_efficiency (sharu_c, name, km_per_l, valid_from, valid_to) VALUES (?, ?, ?, ?, ?)',
+    )
+    .bind(entry.sharuC, entry.name, entry.kmPerL, entry.validFrom, entry.validTo ?? '')
+    .run()
+}
+
+/** 燃費 1 行を削除する (PK = sharu_c, valid_from) */
+export async function deleteFuelEntry(
+  db: D1Database,
+  sharuC: string,
+  validFrom: string,
+): Promise<void> {
+  await db
+    .prepare('DELETE FROM fuel_efficiency WHERE sharu_c = ? AND valid_from = ?')
+    .bind(sharuC, validFrom)
+    .run()
+}
+
 // D1 の bound parameter 上限 (~100) を避けるため 1 INSERT あたりの行数を抑える (5 列)。
 const INSERT_CHUNK = 18
 

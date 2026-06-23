@@ -4,6 +4,7 @@ import {
   serializeFuelEfficiencyCsv,
   resolveFuelEfficiency,
   toEfficiencyLookup,
+  validateFuelEntry,
   type FuelEfficiencyEntry,
 } from '../src/fuel-efficiency'
 import { computeRowSurcharge, type SurchargeMasters, type MeisaiRow } from '../src/surcharge'
@@ -131,6 +132,33 @@ describe('resolveFuelEfficiency — 有効期間解決', () => {
 
   it('無期限 (validTo 空) は終了後も有効', () => {
     expect(resolveFuelEfficiency(entries, '04', '2099-12-31')).toBe(3.5)
+  })
+})
+
+describe('validateFuelEntry (新規登録の入力検証)', () => {
+  const ok = { sharuC: '04', kmPerL: 3.5, validFrom: '2026-01-01' }
+  it('正常 → null', () => {
+    expect(validateFuelEntry(ok)).toBeNull()
+    expect(validateFuelEntry({ ...ok, validTo: '2026-03-31' })).toBeNull()
+    expect(validateFuelEntry({ ...ok, validTo: '' })).toBeNull()
+  })
+  it('車種C 空 → エラー', () => {
+    expect(validateFuelEntry({ ...ok, sharuC: '' })).toContain('車種C')
+  })
+  it('燃費 0 以下 / 非数値 → エラー', () => {
+    expect(validateFuelEntry({ ...ok, kmPerL: 0 })).toContain('燃費')
+    expect(validateFuelEntry({ ...ok, kmPerL: NaN })).toContain('燃費')
+  })
+  it('有効開始 形式不正 → エラー', () => {
+    expect(validateFuelEntry({ ...ok, validFrom: '2026/01/01' })).toContain('有効開始')
+  })
+  it('有効終了 形式不正 → エラー', () => {
+    expect(validateFuelEntry({ ...ok, validTo: 'bad' })).toContain('有効終了')
+  })
+  it('期間逆転 → エラー', () => {
+    expect(validateFuelEntry({ ...ok, validFrom: '2026-04-01', validTo: '2026-01-01' })).toContain(
+      '前',
+    )
   })
 })
 
