@@ -1,5 +1,5 @@
 import { parseDistanceCsv } from '../../src/distance'
-import { replaceDistanceMaster } from '../../src/distance-db'
+import { ensureSchema, replaceDistanceMaster } from '../../src/distance-db'
 import { getDb } from '../utils/db'
 import { requireAuth } from '../utils/auth'
 
@@ -14,6 +14,8 @@ export default defineEventHandler(async (event) => {
   if (!body || body.trim() === '') {
     throw createError({ statusCode: 400, statusMessage: 'CSV body が空です' })
   }
+
+  await ensureSchema(db) // 初回 upload でも動くようスキーマを ensure (idempotent)
 
   const { master, warnings } = parseDistanceCsv(body)
   if (master.prefs.length === 0) {

@@ -6,6 +6,8 @@ import {
   masterToRows,
   loadDistanceMaster,
   replaceDistanceMaster,
+  ensureSchema,
+  SCHEMA_DDL,
   type D1Database,
   type D1PreparedStatement,
   type PrefRow,
@@ -114,6 +116,18 @@ class FakeD1 implements D1Database {
     return []
   }
 }
+
+describe('ensureSchema', () => {
+  it('SCHEMA_DDL は 2 つの CREATE TABLE IF NOT EXISTS', () => {
+    expect(SCHEMA_DDL).toHaveLength(2)
+    expect(SCHEMA_DDL.every((s) => s.includes('CREATE TABLE IF NOT EXISTS'))).toBe(true)
+  })
+  it('fake D1 で例外なく適用できる (idempotent)', async () => {
+    const db = new FakeD1()
+    await expect(ensureSchema(db)).resolves.toBeUndefined()
+    await expect(ensureSchema(db)).resolves.toBeUndefined()
+  })
+})
 
 describe('loadDistanceMaster / replaceDistanceMaster (fake D1)', () => {
   it('replace → load で CSV master を round-trip する', async () => {

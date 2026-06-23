@@ -40,6 +40,26 @@ async function onUpload(e: Event) {
     input.value = ''
   }
 }
+
+// D1 スキーマ初期化 (wrangler d1 migrations apply の代わり)。Refs #11
+type MigrateState = 'idle' | 'running' | 'done' | 'error'
+const migrateState = ref<MigrateState>('idle')
+const migrateMsg = ref('')
+
+async function onMigrate() {
+  migrateState.value = 'running'
+  migrateMsg.value = ''
+  try {
+    const res = await $fetch<{ ok: boolean; message: string }>('/api/distance-migrate', {
+      method: 'POST',
+    })
+    migrateState.value = 'done'
+    migrateMsg.value = res.message
+  } catch (err: unknown) {
+    migrateState.value = 'error'
+    migrateMsg.value = err instanceof Error ? err.message : 'スキーマ適用に失敗しました'
+  }
+}
 </script>
 
 <template>
@@ -59,7 +79,13 @@ async function onUpload(e: Event) {
           CSV アップロード
           <input type="file" accept=".csv,text/csv" @change="onUpload" />
         </label>
+        <button class="btn" :disabled="migrateState === 'running'" @click="onMigrate">
+          DB スキーマ初期化
+        </button>
       </div>
+      <p v-if="migrateState === 'running'" class="status">スキーマ適用中…</p>
+      <p v-else-if="migrateState === 'done'" class="status ok">{{ migrateMsg }}</p>
+      <p v-else-if="migrateState === 'error'" class="status err">{{ migrateMsg }}</p>
       <p v-if="uploadState === 'uploading'" class="status">取込中…</p>
       <p v-else-if="uploadState === 'done'" class="status ok">{{ uploadMsg }}</p>
       <p v-else-if="uploadState === 'error'" class="status err">{{ uploadMsg }}</p>

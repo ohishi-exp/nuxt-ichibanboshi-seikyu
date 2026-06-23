@@ -1,4 +1,4 @@
-import { loadDistanceMaster } from '../../src/distance-db'
+import { ensureSchema, loadDistanceMaster } from '../../src/distance-db'
 import { serializeDistanceCsv } from '../../src/distance'
 import { getDb } from '../utils/db'
 import { requireAuth } from '../utils/auth'
@@ -8,6 +8,7 @@ import { requireAuth } from '../utils/auth'
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const db = getDb(event)
+  await ensureSchema(db) // 未初期化 D1 でも空 CSV を返せるようスキーマを ensure
   const master = await loadDistanceMaster(db)
   const csv = serializeDistanceCsv(master)
   setHeader(event, 'Content-Type', 'text/csv; charset=utf-8')
