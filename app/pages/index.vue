@@ -374,6 +374,29 @@ async function onDeleteDiesel(month: string) {
   }
 }
 
+// 経産省公表値の取込 (動的に最新週次 xlsx を解決 → 月次平均 → upsert)。Refs #11 (#2)
+const importState = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+const importMsg = ref('')
+async function onDieselImport() {
+  importState.value = 'running'
+  importMsg.value = ''
+  try {
+    const res = await $fetch<{
+      ok: boolean
+      months?: number
+      latestMonth?: string
+      latestPrice?: number
+      sourceUrl?: string
+    }>('/api/diesel-import', { method: 'POST' })
+    importState.value = 'done'
+    importMsg.value = `取込完了: ${res.months} ヶ月 (最新 ${res.latestMonth} = ${res.latestPrice} 円/L)`
+    await loadDieselView()
+  } catch (err: unknown) {
+    importState.value = 'error'
+    importMsg.value = err instanceof Error ? err.message : '取込に失敗しました'
+  }
+}
+
 // 経産省公表値の自動取得 probe (Phase 1: Worker から到達できるか確認)。Refs #11 (#2)
 interface DieselProbeResult {
   ok: boolean
@@ -720,8 +743,8 @@ watch(
         <h2>軽油価格マスタ (当月全国平均)</h2>
         <p>
           月別の全国平均軽油価格 (円/L) を管理します。列は <code>年月,軽油価格</code>。
-          計算エンジンの「当月価格」に使います。経産省 (資源エネルギー庁) 公表値からの
-          自動取得は別途対応予定で、当面は CSV / 手入力で登録します。
+          計算エンジンの「当月価格」に使います。経産省 (資源エネルギー庁) 公表の最新
+          週次データから自動取込できます。手入力 / CSV でも登録できます。
         </p>
         <div class="actions">
           <a class="btn" href="/api/diesel-price" download="diesel-price.csv">CSV ダウンロード</a>
@@ -774,6 +797,21 @@ watch(
             </ul>
           </template>
         </div>
+
+        <h3 class="view-title">経産省から取込 (自動)</h3>
+        <p class="lead-note">
+          石油製品価格調査の結果ページから最新の週次ファイル (給油所小売価格) を解決し、
+          軽油シートの全国平均を月次平均に集約して直近 24 ヶ月を upsert します。手入力した月は
+          上書きされません。
+        </p>
+        <div class="actions">
+          <button class="btn" :disabled="importState === 'running'" @click="onDieselImport">
+            経産省から取込
+          </button>
+        </div>
+        <p v-if="importState === 'running'" class="status">取込中… (公表ページ → xlsx 解析)</p>
+        <p v-else-if="importState === 'done'" class="status ok">{{ importMsg }}</p>
+        <p v-else-if="importState === 'error'" class="status err">{{ importMsg }}</p>
 
         <h3 class="view-title">新規登録</h3>
         <form class="row-form" @submit.prevent="onAddDiesel">
