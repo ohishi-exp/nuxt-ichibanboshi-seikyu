@@ -4,6 +4,42 @@
 // = ここが描画される時点で「大石運輸倉庫テナントで認証済み」。
 const config = useRuntimeConfig()
 const authWorkerUrl = config.public.authWorkerUrl as string
+
+// 県庁間距離マスタ CSV upload (距離制 input)。Refs #11
+type UploadState = 'idle' | 'uploading' | 'done' | 'error'
+const uploadState = ref<UploadState>('idle')
+const uploadMsg = ref('')
+const uploadWarnings = ref<string[]>([])
+
+async function onUpload(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  uploadState.value = 'uploading'
+  uploadMsg.value = ''
+  uploadWarnings.value = []
+  try {
+    const text = await file.text()
+    const res = await $fetch<{
+      ok: boolean
+      prefectures: number
+      distances: number
+      warnings: string[]
+    }>('/api/distance', {
+      method: 'POST',
+      body: text,
+      headers: { 'Content-Type': 'text/csv' },
+    })
+    uploadState.value = 'done'
+    uploadMsg.value = `取込完了: ${res.prefectures} 県 / ${res.distances} 距離`
+    uploadWarnings.value = res.warnings ?? []
+  } catch (err: unknown) {
+    uploadState.value = 'error'
+    uploadMsg.value = err instanceof Error ? err.message : '取込に失敗しました'
+  } finally {
+    input.value = ''
+  }
+}
 </script>
 
 <template>
@@ -12,11 +48,33 @@ const authWorkerUrl = config.public.authWorkerUrl as string
     <p class="lead">確認・計算・表示専用システム</p>
 
     <section class="card">
-      <h2>準備中</h2>
+      <h2>県庁間距離マスタ (距離制)</h2>
       <p>
-        確認 UI (期間選択 → 明細・得意先別集計・警告) は
+        距離制サーチャージの県庁間距離 (47×47) を CSV で download / input します。
+        Excel で編集し「CSV UTF-8」で保存したファイルをアップロードすると全置換されます。
+      </p>
+      <div class="actions">
+        <a class="btn" href="/api/distance" download="kenchokan-distance.csv">CSV ダウンロード</a>
+        <label class="btn file">
+          CSV アップロード
+          <input type="file" accept=".csv,text/csv" @change="onUpload" />
+        </label>
+      </div>
+      <p v-if="uploadState === 'uploading'" class="status">取込中…</p>
+      <p v-else-if="uploadState === 'done'" class="status ok">{{ uploadMsg }}</p>
+      <p v-else-if="uploadState === 'error'" class="status err">{{ uploadMsg }}</p>
+      <ul v-if="uploadWarnings.length" class="warnings">
+        <li v-for="(w, i) in uploadWarnings.slice(0, 20)" :key="i">{{ w }}</li>
+        <li v-if="uploadWarnings.length > 20">…他 {{ uploadWarnings.length - 20 }} 件</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>確認 UI</h2>
+      <p>
+        期間選択 → 明細・得意先別集計・警告は
         <a href="https://github.com/ohishi-exp/nuxt-ichibanboshi-seikyu/issues/5">#5</a>
-        で実装予定です。現在は認証とデプロイ経路の疎通のみ有効です。
+        で実装予定です。
       </p>
     </section>
 
@@ -48,11 +106,47 @@ h1 {
   border-radius: 0.5rem;
   padding: 1rem 1.25rem;
   background: #f9fafb;
+  margin-bottom: 1rem;
 }
 .card h2 {
   font-size: 1.1rem;
   font-weight: 600;
   margin: 0 0 0.5rem;
+}
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.btn {
+  display: inline-block;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  background: #fff;
+  color: #1f2937;
+  font-size: 0.875rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn.file input {
+  display: none;
+}
+.status {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+}
+.status.ok {
+  color: #047857;
+}
+.status.err {
+  color: #b91c1c;
+}
+.warnings {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.8rem;
+  color: #b45309;
 }
 .foot {
   margin-top: 2rem;
