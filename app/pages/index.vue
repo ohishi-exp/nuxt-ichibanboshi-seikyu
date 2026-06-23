@@ -1409,12 +1409,13 @@ watch(
             <h3 class="view-title">未計上 (要確認)</h3>
             <table class="grid">
               <thead>
-                <tr><th>得意先C</th><th>積地→卸地</th><th>車種C</th><th>売上日</th><th>理由</th></tr>
+                <tr><th>得意先C</th><th>積地</th><th>卸地</th><th>車種C</th><th>売上日</th><th>理由</th></tr>
               </thead>
               <tbody>
                 <tr v-for="(w, i) in reviewWarnings.slice(0, 200)" :key="i">
                   <td>{{ w.row.tokuiC }}</td>
-                  <td>{{ w.row.fromPref }}→{{ w.row.toPref }}</td>
+                  <td>{{ w.row.fromPref }}</td>
+                  <td>{{ w.row.toPref }}</td>
                   <td>{{ w.row.sharuC }}</td>
                   <td>{{ w.row.uriageDate }}</td>
                   <td>{{ w.warning }}</td>
@@ -1505,7 +1506,7 @@ watch(
             <table class="grid">
               <thead>
                 <tr>
-                  <th>売上日</th><th>積地→卸地</th><th>車種</th><th>運賃</th>
+                  <th>売上日</th><th>積地</th><th>卸地</th><th>車種</th><th>運賃</th>
                   <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
                   <th>燃費 (km/L)</th><th>サーチャージ (円)</th><th>状態</th>
                 </tr>
@@ -1513,7 +1514,8 @@ watch(
               <tbody>
                 <tr v-for="(d, i) in shimebiDetailRows" :key="i">
                   <td>{{ d.row.uriageDate }}</td>
-                  <td>{{ d.row.fromPref }}→{{ d.row.toPref }}</td>
+                  <td>{{ d.row.fromPref }}</td>
+                  <td>{{ d.row.toPref }}</td>
                   <td>{{ d.row.sharuC }}</td>
                   <td class="num">{{ d.row.unchin.toLocaleString() }}</td>
                   <td class="num">{{ dieselPriceForRow(d.row.uriageDate) ?? '—' }}</td>
