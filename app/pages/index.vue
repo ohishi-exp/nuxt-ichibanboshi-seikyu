@@ -296,7 +296,8 @@ async function loadDieselView() {
   dieselViewMsg.value = ''
   try {
     const csv = await $fetch<string>('/api/diesel-price', { responseType: 'text' })
-    dieselEntries.value = parseDieselPriceCsv(csv).entries
+    // 表示は年月の降順 (新しい月が上)。保存/削除は month キー単位なので並び順は不問。
+    dieselEntries.value = parseDieselPriceCsv(csv).entries.sort((a, b) => b.month.localeCompare(a.month))
     dieselViewState.value = 'done'
     if (dieselEntries.value.length === 0) dieselViewMsg.value = '登録なし (まだ登録されていません)'
   } catch (err: unknown) {
