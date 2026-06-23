@@ -5,6 +5,7 @@ import { parseDieselPriceCsv, toMonthlyPriceMap, type DieselPriceEntry } from '.
 import { computeSurcharge, type SurchargeMasters, type SurchargeResult } from '../../src/surcharge'
 import { mapToMeisaiRows, type IchibanSurchargeRow } from '../../src/surcharge-review'
 import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
+import { SHIMEBI_DETAIL_PAYLOAD_KEY } from '../../src/shimebi-detail-key'
 import {
   generateIncrementTable,
   TIME_BASED_DISTANCES,
@@ -640,8 +641,6 @@ const shimebiDetailName = computed(
 // 明細の表示方法 (下/右/モーダル/別タブ) を localStorage に保存して設定にする。
 type DetailMode = 'below' | 'right' | 'modal' | 'newtab'
 const DETAIL_MODE_KEY = 'ichibanboshi-seikyu:shimebi-detail-mode'
-// pages/shimebi-detail.vue の SHIMEBI_DETAIL_PAYLOAD_KEY と一致させること。
-const SHIMEBI_DETAIL_PAYLOAD_KEY = 'ichibanboshi-seikyu:shimebi-detail-payload'
 const shimebiDetailMode = ref<DetailMode>('below')
 if (import.meta.client) {
   const saved = localStorage.getItem(DETAIL_MODE_KEY)

@@ -5,8 +5,7 @@
 // localStorage (SHIMEBI_DETAIL_PAYLOAD_KEY) に書き出して window.open する。
 // 本ページはそれを読み出して ShimebiDetail で描画するだけ (API 再取得しない)。
 import type { SurchargeResult } from '../../src/surcharge'
-
-export const SHIMEBI_DETAIL_PAYLOAD_KEY = 'ichibanboshi-seikyu:shimebi-detail-payload'
+import { SHIMEBI_DETAIL_PAYLOAD_KEY } from '../../src/shimebi-detail-key'
 
 interface DetailPayload {
   code: string
