@@ -29,14 +29,14 @@ type Section =
   | 'notification'
   | 'shimebi'
   | 'settings'
-const active = ref<Section>('distance')
+const active = ref<Section>('shimebi')
 const nav: { key: Section; label: string; group: string }[] = [
-  { key: 'distance', label: '県庁間距離マスタ', group: 'マスタ' },
-  { key: 'fuel', label: '燃費マスタ', group: 'マスタ' },
-  { key: 'diesel', label: '軽油価格マスタ', group: 'マスタ' },
-  { key: 'surchargeCustomers', label: 'サーチャージマスタ', group: 'マスタ' },
-  { key: 'notification', label: '届出書', group: '帳票' },
   { key: 'shimebi', label: '締め日別 取引先', group: '確認' },
+  { key: 'distance', label: '県庁間距離マスタ', group: '設定' },
+  { key: 'fuel', label: '燃費マスタ', group: '設定' },
+  { key: 'diesel', label: '軽油価格マスタ', group: '設定' },
+  { key: 'surchargeCustomers', label: 'サーチャージマスタ', group: '設定' },
+  { key: 'notification', label: '届出書', group: '設定' },
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
 ]
 const groups = [...new Set(nav.map((n) => n.group))]
