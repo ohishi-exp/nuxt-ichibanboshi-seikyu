@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { verifyJwtHs256 } from '../server/utils/auth'
+import { verifyJwtHs256, isAdminPayload } from '../server/utils/auth'
 
 const enc = new TextEncoder()
 const SECRET = 'test-shared-hs256-secret'
@@ -68,5 +68,16 @@ describe('verifyJwtHs256', () => {
   it('形式不正 (3 part でない) → null', async () => {
     expect(await verifyJwtHs256('a.b', SECRET)).toBeNull()
     expect(await verifyJwtHs256('', SECRET)).toBeNull()
+  })
+})
+
+describe('isAdminPayload', () => {
+  it('role === "admin" → true', () => {
+    expect(isAdminPayload({ role: 'admin' })).toBe(true)
+  })
+  it('viewer / role 欠落 / 別値 → false', () => {
+    expect(isAdminPayload({ role: 'viewer' })).toBe(false)
+    expect(isAdminPayload({})).toBe(false)
+    expect(isAdminPayload({ role: 'Admin' })).toBe(false)
   })
 })

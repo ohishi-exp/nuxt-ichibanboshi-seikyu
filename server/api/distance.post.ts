@@ -1,14 +1,14 @@
 import { parseDistanceCsv } from '../../src/distance'
 import { ensureSchema, replaceDistanceMaster } from '../../src/distance-db'
 import { getDb } from '../utils/db'
-import { requireAuth } from '../utils/auth'
+import { requireAdmin } from '../utils/auth'
 
 // POST /api/distance — Excel→CSV を upload して県庁間距離マスタ (D1) を全置換する。
 // body は CSV テキスト (text/csv もしくは text/plain)。Refs #11
 //
-// 破壊的 (全置換) なので requireAuth で auth-worker JWT を署名検証してから実行する。
+// 破壊的 (全置換) かつ管理者限定。requireAdmin で署名検証 + role==='admin' を確認する。
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
+  await requireAdmin(event)
   const db = getDb(event)
   const body = await readRawBody(event, 'utf8')
   if (!body || body.trim() === '') {
