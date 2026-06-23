@@ -2,14 +2,10 @@
 import { parseDistanceCsv, distanceKey, type DistanceMaster } from '../../src/distance'
 import { parseFuelEfficiencyCsv, toEfficiencyLookup, type FuelEfficiencyEntry } from '../../src/fuel-efficiency'
 import { parseDieselPriceCsv, toMonthlyPriceMap, type DieselPriceEntry } from '../../src/diesel-price'
-import {
-  computeSurcharge,
-  type SurchargeMasters,
-  type AggregateRow,
-  type SurchargeResult,
-} from '../../src/surcharge'
+import { computeSurcharge, type SurchargeMasters, type SurchargeResult } from '../../src/surcharge'
 import { mapToMeisaiRows, type IchibanSurchargeRow } from '../../src/surcharge-review'
 import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
+import { SHIMEBI_DETAIL_PAYLOAD_KEY } from '../../src/shimebi-detail-key'
 import {
   generateIncrementTable,
   TIME_BASED_DISTANCES,
@@ -30,7 +26,6 @@ type Section =
   | 'diesel'
   | 'surchargeCustomers'
   | 'notification'
-  | 'review'
   | 'shimebi'
   | 'settings'
 const active = ref<Section>('distance')
@@ -40,7 +35,6 @@ const nav: { key: Section; label: string; group: string }[] = [
   { key: 'diesel', label: '軽油価格マスタ', group: 'マスタ' },
   { key: 'surchargeCustomers', label: 'サーチャージマスタ', group: 'マスタ' },
   { key: 'notification', label: '届出書', group: '帳票' },
-  { key: 'review', label: '明細・集計', group: '確認' },
   { key: 'shimebi', label: '締め日別 取引先', group: '確認' },
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
 ]
@@ -550,81 +544,6 @@ async function onDieselProbe() {
   }
 }
 
-// --- 確認 UI (#5): 一番星 → 計算エンジン → 明細・得意先別集計 ---
-const reviewFrom = ref('')
-const reviewTo = ref('')
-const reviewKind = ref<'billing_only' | 'transport' | 'all'>('billing_only')
-const reviewState = ref<'idle' | 'running' | 'done' | 'error'>('idle')
-const reviewMsg = ref('')
-const reviewTotal = ref(0)
-const reviewAggregates = ref<AggregateRow[]>([])
-const reviewWarnings = ref<SurchargeResult[]>([])
-const reviewOkCount = ref(0)
-
-async function onRunReview() {
-  if (!reviewFrom.value || !reviewTo.value) {
-    reviewMsg.value = '期間 (from / to) を指定してください'
-    reviewState.value = 'error'
-    return
-  }
-  reviewState.value = 'running'
-  reviewMsg.value = ''
-  try {
-    // 1) 一番星から請求基礎データを取得 (proxy)
-    const base = await $fetch<{
-      rows: IchibanSurchargeRow[]
-      reason?: string
-      upstreamStatus?: number
-    }>('/api/surcharge-base', {
-      query: { from: reviewFrom.value, to: reviewTo.value, kind: reviewKind.value, limit: 10000 },
-    })
-    if (base.reason) {
-      reviewState.value = 'error'
-      reviewMsg.value =
-        base.reason === 'upstream'
-          ? `一番星が ${base.upstreamStatus} を返しました`
-          : base.reason === 'connect_failed'
-            ? '一番星への接続に失敗しました'
-            : '一番星連携が未設定です'
-      return
-    }
-
-    // 2) マスタ + サーチャージ設定を並列ロード (CSV → parser)
-    const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
-      $fetch<string>('/api/distance', { responseType: 'text' }),
-      $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
-      $fetch<string>('/api/diesel-price', { responseType: 'text' }),
-      $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings'),
-    ])
-    const distanceKm = parseDistanceCsv(distCsv).master.distanceKm
-    const fuelEntries = parseFuelEfficiencyCsv(fuelCsv).entries
-    const dieselEntries2 = parseDieselPriceCsv(dieselCsv).entries
-    // 設定を反映 (届出書の表示とも同期)
-    notifBasePrice.value = settings.basePrice
-    notifPriceStep.value = settings.priceStep
-
-    const masters: SurchargeMasters = {
-      basePrice: settings.basePrice,
-      priceStep: settings.priceStep,
-      monthlyDieselPrice: toMonthlyPriceMap(dieselEntries2),
-      fuelEfficiency: toEfficiencyLookup(fuelEntries),
-      distanceKm,
-    }
-
-    // 3) 計算エンジンで集計
-    const summary = computeSurcharge(mapToMeisaiRows(base.rows), masters)
-    reviewTotal.value = summary.total
-    reviewAggregates.value = summary.aggregates
-    reviewWarnings.value = summary.warnings
-    reviewOkCount.value = summary.results.filter((r) => r.status === 'ok').length
-    reviewState.value = 'done'
-    if (base.rows.length === 0) reviewMsg.value = '対象期間の請求行がありません'
-  } catch (err: unknown) {
-    reviewState.value = 'error'
-    reviewMsg.value = err instanceof Error ? err.message : '集計に失敗しました'
-  }
-}
-
 // --- D1 スキーマ初期化 (wrangler d1 migrations apply の代わり)。Refs #11 ---
 type MigrateState = 'idle' | 'running' | 'done' | 'error'
 const migrateState = ref<MigrateState>('idle')
@@ -718,7 +637,35 @@ const shimebiDetailRows = computed(() =>
 const shimebiDetailName = computed(
   () => shimebiRows.value.find((r) => r.customerCode === shimebiDetailCode.value)?.customerName ?? '',
 )
+
+// 明細の表示方法 (下/右/モーダル/別タブ) を localStorage に保存して設定にする。
+type DetailMode = 'below' | 'right' | 'modal' | 'newtab'
+const DETAIL_MODE_KEY = 'ichibanboshi-seikyu:shimebi-detail-mode'
+const shimebiDetailMode = ref<DetailMode>('below')
+if (import.meta.client) {
+  const saved = localStorage.getItem(DETAIL_MODE_KEY)
+  if (saved === 'below' || saved === 'right' || saved === 'modal' || saved === 'newtab') {
+    shimebiDetailMode.value = saved
+  }
+}
+watch(shimebiDetailMode, (m) => {
+  if (import.meta.client) localStorage.setItem(DETAIL_MODE_KEY, m)
+})
+
 function onShowShimebiDetail(code: string) {
+  // 別タブ: 明細データを localStorage に渡して standalone ページを新規タブで開く
+  if (shimebiDetailMode.value === 'newtab') {
+    if (!import.meta.client) return
+    const rows = shimebiResults.value.filter((r) => r.row.tokuiC === code)
+    const name = shimebiRows.value.find((r) => r.customerCode === code)?.customerName ?? ''
+    localStorage.setItem(
+      SHIMEBI_DETAIL_PAYLOAD_KEY,
+      JSON.stringify({ code, name, date: shimebiDate.value, rows, dieselMap: shimebiDieselMap.value }),
+    )
+    window.open('/shimebi-detail', '_blank')
+    return
+  }
+  // 下/右/モーダル: ページ内でトグル表示
   shimebiDetailCode.value = shimebiDetailCode.value === code ? null : code
 }
 /** 当月軽油価格 (円/L) を行の売上月から引く。無ければ null */
@@ -1348,87 +1295,6 @@ watch(
         </div>
       </section>
 
-      <!-- 確認 UI (placeholder) -->
-      <section v-else-if="active === 'review'" class="card">
-        <h2>明細・得意先別集計</h2>
-        <p>
-          期間を指定して一番星から請求基礎データを取得し、計算エンジン (段階テーブル + ceil、
-          有効期間つき燃費、県庁間距離) で得意先別 × 請求日に集計します。各マスタ
-          (距離・燃費・軽油価格) の現在値を使います。
-        </p>
-        <div class="actions">
-          <label class="inline-label">
-            from
-            <input v-model="reviewFrom" type="month" required />
-          </label>
-          <label class="inline-label">
-            to
-            <input v-model="reviewTo" type="month" required />
-          </label>
-          <label class="inline-label">
-            区分
-            <select v-model="reviewKind">
-              <option value="billing_only">請求のみ (請求K=1)</option>
-              <option value="transport">通常運送 (請求K=0)</option>
-              <option value="all">全区分</option>
-            </select>
-          </label>
-          <button class="btn" :disabled="reviewState === 'running'" @click="onRunReview">
-            集計実行
-          </button>
-        </div>
-        <p v-if="reviewState === 'running'" class="status">集計中…</p>
-        <p v-else-if="reviewState === 'error'" class="status err">{{ reviewMsg }}</p>
-
-        <template v-if="reviewState === 'done'">
-          <p v-if="reviewMsg" class="status">{{ reviewMsg }}</p>
-          <p class="summary">
-            計上 {{ reviewOkCount }} 件 / 合計サーチャージ
-            <strong>{{ reviewTotal.toLocaleString() }} 円</strong>
-            <span v-if="reviewWarnings.length"> ・ 未計上(要確認) {{ reviewWarnings.length }} 件</span>
-          </p>
-
-          <h3 class="view-title">得意先別 × 請求日</h3>
-          <table v-if="reviewAggregates.length" class="grid">
-            <thead>
-              <tr><th>得意先C</th><th>得意先名</th><th>請求日</th><th>件数</th><th>サーチャージ (円)</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="(a, i) in reviewAggregates" :key="i">
-                <td>{{ a.tokuiC }}</td>
-                <td>{{ a.tokuiName }}</td>
-                <td>{{ a.seikyuDate || '（請求日なし）' }}</td>
-                <td class="num">{{ a.count }}</td>
-                <td class="num">{{ a.amount.toLocaleString() }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-else class="status">計上対象がありません。</p>
-
-          <template v-if="reviewWarnings.length">
-            <h3 class="view-title">未計上 (要確認)</h3>
-            <table class="grid">
-              <thead>
-                <tr><th>得意先C</th><th>積地</th><th>卸地</th><th>車種C</th><th>売上日</th><th>理由</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(w, i) in reviewWarnings.slice(0, 200)" :key="i">
-                  <td>{{ w.row.tokuiC }}</td>
-                  <td>{{ w.row.fromPref }}</td>
-                  <td>{{ w.row.toPref }}</td>
-                  <td>{{ w.row.sharuC }}</td>
-                  <td>{{ w.row.uriageDate }}</td>
-                  <td>{{ w.warning }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <p v-if="reviewWarnings.length > 200" class="status">
-              …他 {{ reviewWarnings.length - 200 }} 件
-            </p>
-          </template>
-        </template>
-      </section>
-
       <!-- 締め日別 取引先 (締め日 = 請求日)。金額/サーチャージ/登録有無/差額 + その場で登録 -->
       <section v-else-if="active === 'shimebi'" class="card">
         <h2>締め日別 取引先</h2>
@@ -1448,11 +1314,22 @@ watch(
           <button class="btn" :disabled="shimebiState === 'loading'" @click="onRunShimebi">
             表示
           </button>
+          <label class="inline-label">
+            明細の表示
+            <select v-model="shimebiDetailMode">
+              <option value="below">下に表示</option>
+              <option value="right">右に表示</option>
+              <option value="modal">モーダル (全画面)</option>
+              <option value="newtab">別タブ</option>
+            </select>
+          </label>
         </div>
         <p v-if="shimebiState === 'loading'" class="status">集計中…</p>
         <p v-else-if="shimebiState === 'error'" class="status err">{{ shimebiMsg }}</p>
         <template v-if="shimebiState === 'done'">
           <p v-if="shimebiMsg" class="status">{{ shimebiMsg }}</p>
+          <div :class="['shimebi-layout', shimebiDetailMode === 'right' && shimebiDetailCode ? 'is-right' : '']">
+            <div class="shimebi-list">
           <table v-if="shimebiRows.length" class="grid">
             <thead>
               <tr>
@@ -1494,43 +1371,39 @@ watch(
             </tbody>
           </table>
 
-          <!-- 取引先 明細 + 計算根拠 (名前クリックで表示) -->
-          <div v-if="shimebiDetailCode" class="detail-panel">
-            <h3 class="view-title">
-              明細・計算根拠 — {{ shimebiDetailCode }} {{ shimebiDetailName }}（締め日 {{ shimebiDate }}）
-            </h3>
-            <p class="lead-note">
-              サーチャージ = 切上(距離 km ÷ 燃費 km/L × 上昇額 円/L)。上昇額は当月軽油価格を段階表に当てた値
-              (基準価格以下は 0)。未計上は距離/当月価格の欠落が理由です。
-            </p>
-            <table class="grid">
-              <thead>
-                <tr>
-                  <th>売上日</th><th>積地</th><th>卸地</th><th>車種</th><th>運賃</th>
-                  <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
-                  <th>燃費 (km/L)</th><th>サーチャージ (円)</th><th>状態</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(d, i) in shimebiDetailRows" :key="i">
-                  <td>{{ d.row.uriageDate }}</td>
-                  <td>{{ d.row.fromPref }}</td>
-                  <td>{{ d.row.toPref }}</td>
-                  <td>{{ d.row.sharuC }}</td>
-                  <td class="num">{{ d.row.unchin.toLocaleString() }}</td>
-                  <td class="num">{{ dieselPriceForRow(d.row.uriageDate) ?? '—' }}</td>
-                  <td class="num">{{ d.increment ?? '—' }}</td>
-                  <td class="num">{{ d.km ?? '—' }}</td>
-                  <td class="num">{{ d.efficiency ?? '—' }}</td>
-                  <td class="num">{{ d.amount.toLocaleString() }}</td>
-                  <td>
-                    <span v-if="d.status === 'ok'" class="badge-on">計上</span>
-                    <span v-else-if="d.status === 'warning'" class="warn-note">{{ d.warning }}</span>
-                    <span v-else class="badge-off">対象外</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            </div>
+            <!-- 下 / 右: ページ内インライン明細 -->
+            <div
+              v-if="shimebiDetailCode && (shimebiDetailMode === 'below' || shimebiDetailMode === 'right')"
+              class="detail-panel"
+            >
+              <button class="link-del detail-close" @click="shimebiDetailCode = null">閉じる ✕</button>
+              <ShimebiDetail
+                :code="shimebiDetailCode"
+                :name="shimebiDetailName"
+                :date="shimebiDate"
+                :rows="shimebiDetailRows"
+                :diesel-map="shimebiDieselMap"
+              />
+            </div>
+          </div>
+
+          <!-- モーダル (全画面) -->
+          <div
+            v-if="shimebiDetailCode && shimebiDetailMode === 'modal'"
+            class="modal-overlay"
+            @click.self="shimebiDetailCode = null"
+          >
+            <div class="modal-box">
+              <button class="btn modal-close" @click="shimebiDetailCode = null">✕ 閉じる</button>
+              <ShimebiDetail
+                :code="shimebiDetailCode"
+                :name="shimebiDetailName"
+                :date="shimebiDate"
+                :rows="shimebiDetailRows"
+                :diesel-map="shimebiDieselMap"
+              />
+            </div>
           </div>
         </template>
       </section>
@@ -1901,6 +1774,50 @@ nav {
   margin-top: 1.25rem;
   padding-top: 0.75rem;
   border-top: 2px solid #e5e7eb;
+}
+.detail-close {
+  margin-bottom: 0.5rem;
+}
+/* 右に表示: 一覧と明細を横並び */
+.shimebi-layout.is-right {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.shimebi-layout.is-right .shimebi-list {
+  flex: 0 0 auto;
+}
+.shimebi-layout.is-right .detail-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  overflow-x: auto;
+}
+/* モーダル (全画面オーバーレイ) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 1rem;
+  z-index: 50;
+  overflow: auto;
+}
+.modal-box {
+  background: #fff;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 1200px;
+  max-height: 90vh;
+  overflow: auto;
+}
+.modal-close {
+  margin-bottom: 0.75rem;
 }
 /* 週次内訳セル: 調査日:価格 を折り返しチップ表示 */
 .weekly-cell {
