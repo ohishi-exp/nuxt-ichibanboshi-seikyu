@@ -1,5 +1,6 @@
 import { ensureSchema } from '../../src/distance-db'
 import { ensureFuelSchema } from '../../src/fuel-efficiency-db'
+import { ensureDieselSchema } from '../../src/diesel-price-db'
 import { getDb } from '../utils/db'
 import { requireAdmin } from '../utils/auth'
 
@@ -11,9 +12,10 @@ export default defineEventHandler(async (event) => {
   const db = getDb(event)
   await ensureSchema(db) // kenchokan_prefecture / kenchokan_distance
   await ensureFuelSchema(db) // fuel_efficiency
+  await ensureDieselSchema(db) // diesel_price
   return {
     ok: true,
     message:
-      'スキーマを適用しました (kenchokan_prefecture / kenchokan_distance / fuel_efficiency)',
+      'スキーマを適用しました (kenchokan_prefecture / kenchokan_distance / fuel_efficiency / diesel_price)',
   }
 })
