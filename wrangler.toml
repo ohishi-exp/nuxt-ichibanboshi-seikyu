@@ -18,12 +18,19 @@ custom_domain = true
 NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 
 # 県庁間距離マスタ等の D1 (距離制サーチャージ)。Refs #11
-# one-time setup:
+#
+# ⚠️ D1 を作成するまで binding を有効化しない。placeholder の database_id だと
+#    wrangler deploy が code 10021 (must have a valid database_id) で fail するため、
+#    下の block はコメントアウトしてある。/api/distance は binding 未設定時 503 を返す。
+#
+# 有効化手順 (one-time、merge 後に運用で実施):
 #   npx wrangler d1 create nuxt-ichibanboshi-seikyu
-#   → 出力された database_id を下に貼る
+#   → 出力された database_id を database_id に貼り、下 5 行の # を外す
 #   npx wrangler d1 migrations apply nuxt-ichibanboshi-seikyu --remote
-[[d1_databases]]
-binding = "DB"
-database_name = "nuxt-ichibanboshi-seikyu"
-database_id = "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
-migrations_dir = "migrations"
+#   → 再 deploy で /api/distance が active 化、画面の CSV アップロードで初期投入
+#
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "nuxt-ichibanboshi-seikyu"
+# database_id = "<wrangler d1 create で発行された UUID>"
+# migrations_dir = "migrations"
