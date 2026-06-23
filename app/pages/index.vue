@@ -36,10 +36,45 @@ const nav: { key: Section; label: string; group: string }[] = [
 const groups = [...new Set(nav.map((n) => n.group))]
 
 // --- 届出書 (届出用紙)。段階上昇額テーブル + 時間制平均距離 + 燃費マスタ現在値。Refs #11-B ---
-const incrementTable = generateIncrementTable()
 const timeBasedDistances = TIME_BASED_DISTANCES
-const notifBasePrice = NOTIFICATION_BASE_PRICE
-const notifPriceStep = NOTIFICATION_PRICE_STEP
+// 基準価格 / 刻み幅は設定 (surcharge_settings) で変更可能。既定は notification-form の定数。
+const notifBasePrice = ref(NOTIFICATION_BASE_PRICE)
+const notifPriceStep = ref(NOTIFICATION_PRICE_STEP)
+// 段階上昇額テーブルは基準価格・刻み幅から導出 (設定変更で追従)。
+const incrementTable = computed(() => generateIncrementTable(notifBasePrice.value, notifPriceStep.value))
+
+// サーチャージ設定 (基準価格 / 刻み幅) の読込・保存。Refs #11
+const settingsState = ref<'idle' | 'loading' | 'saving' | 'done' | 'error'>('idle')
+const settingsMsg = ref('')
+async function loadSurchargeSettingsView() {
+  settingsState.value = 'loading'
+  try {
+    const s = await $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings')
+    notifBasePrice.value = s.basePrice
+    notifPriceStep.value = s.priceStep
+    settingsState.value = 'idle'
+  } catch (err: unknown) {
+    settingsState.value = 'error'
+    settingsMsg.value = err instanceof Error ? err.message : '設定の読込に失敗しました'
+  }
+}
+async function onSaveSurchargeSettings() {
+  settingsState.value = 'saving'
+  settingsMsg.value = ''
+  try {
+    const s = await $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings', {
+      method: 'PUT',
+      body: { basePrice: notifBasePrice.value, priceStep: notifPriceStep.value },
+    })
+    notifBasePrice.value = s.basePrice
+    notifPriceStep.value = s.priceStep
+    settingsState.value = 'done'
+    settingsMsg.value = '保存しました (届出書・計算に反映)'
+  } catch (err: unknown) {
+    settingsState.value = 'error'
+    settingsMsg.value = err instanceof Error ? err.message : '保存に失敗しました'
+  }
+}
 function onPrintNotification() {
   // 印刷ダイアログ → 「PDF に保存」。@media print で届出書だけを出す。
   window.print()
@@ -505,19 +540,23 @@ async function onRunReview() {
       return
     }
 
-    // 2) マスタを並列ロード (CSV → parser)
-    const [distCsv, fuelCsv, dieselCsv] = await Promise.all([
+    // 2) マスタ + サーチャージ設定を並列ロード (CSV → parser)
+    const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
       $fetch<string>('/api/distance', { responseType: 'text' }),
       $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
       $fetch<string>('/api/diesel-price', { responseType: 'text' }),
+      $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings'),
     ])
     const distanceKm = parseDistanceCsv(distCsv).master.distanceKm
     const fuelEntries = parseFuelEfficiencyCsv(fuelCsv).entries
     const dieselEntries2 = parseDieselPriceCsv(dieselCsv).entries
+    // 設定を反映 (届出書の表示とも同期)
+    notifBasePrice.value = settings.basePrice
+    notifPriceStep.value = settings.priceStep
 
     const masters: SurchargeMasters = {
-      basePrice: notifBasePrice,
-      priceStep: notifPriceStep,
+      basePrice: settings.basePrice,
+      priceStep: settings.priceStep,
       monthlyDieselPrice: toMonthlyPriceMap(dieselEntries2),
       fuelEfficiency: toEfficiencyLookup(fuelEntries),
       distanceKm,
@@ -567,8 +606,11 @@ watch(
       if (!vehiclesLoaded.value) void loadVehicles()
     }
     if (sec === 'diesel' && dieselViewState.value === 'idle') void loadDieselView()
-    // 届出書も燃費マスタ現在値を載せるため fuel を読む
-    if (sec === 'notification' && fuelViewState.value === 'idle') void loadFuelView()
+    // 届出書も燃費マスタ現在値を載せるため fuel を読む + サーチャージ設定を読む
+    if (sec === 'notification') {
+      if (fuelViewState.value === 'idle') void loadFuelView()
+      if (settingsState.value === 'idle') void loadSurchargeSettingsView()
+    }
   },
   { immediate: true },
 )
@@ -922,6 +964,22 @@ watch(
           下記をブラウザの印刷ダイアログで「PDF に保存」すると届出用紙 PDF になります。
           車種別燃費は「燃費マスタ」の現在値を反映します。
         </p>
+
+        <!-- 基準価格 / 刻み幅 の設定 (届出書・段階表・計算に即反映)。印刷には出さない -->
+        <form class="row-form no-print" @submit.prevent="onSaveSurchargeSettings">
+          <label>
+            基準価格 (円/L)
+            <input v-model.number="notifBasePrice" type="number" step="0.1" min="0" required />
+          </label>
+          <label>
+            改定する刻み幅 (円/L)
+            <input v-model.number="notifPriceStep" type="number" step="0.1" min="0.1" required />
+          </label>
+          <button class="btn" type="submit" :disabled="settingsState === 'saving'">設定を保存</button>
+        </form>
+        <p v-if="settingsState === 'saving'" class="status no-print">保存中…</p>
+        <p v-else-if="settingsState === 'done'" class="status ok no-print">{{ settingsMsg }}</p>
+        <p v-else-if="settingsState === 'error'" class="status err no-print">{{ settingsMsg }}</p>
 
         <div class="notification-doc">
           <h1 class="doc-title">燃料サーチャージ 届出書</h1>
