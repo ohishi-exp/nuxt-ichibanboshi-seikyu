@@ -82,9 +82,11 @@ async function loadVehicles() {
     vehicles.value = res.vehicles ?? []
     vehiclesError.value = ''
   } catch (err: unknown) {
-    // 503 (連携未設定) / 502 等 → 手入力フォールバック
-    vehiclesError.value =
-      err instanceof Error ? err.message : '車種マスタ(一番星)の取得に失敗しました'
+    // 503 (連携未設定) / 502 (上流エラー) → 手入力フォールバック。
+    // proxy が data.upstreamStatus を載せていれば一番星側の実 status を表示する。
+    const up = (err as { data?: { upstreamStatus?: number } })?.data?.upstreamStatus
+    const base = err instanceof Error ? err.message : '車種マスタ(一番星)の取得に失敗しました'
+    vehiclesError.value = up ? `${base} (一番星 status: ${up})` : base
     vehicles.value = []
   } finally {
     vehiclesLoaded.value = true
