@@ -17,6 +17,14 @@ custom_domain = true
 # worker は tenant_id を持たない。
 NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 
+# auth-worker のブラウザ JWT (logi_auth_token cookie) を /api/distance で署名検証する
+# ための HS256 鍵。auth-worker / rust-alc-api / hcreader と同じ CF Secrets Store entry を
+# 物理共有する (Refs HealthConnectReaderWorker#15)。entry は既存なので deploy で hydrate 済。
+[[secrets_store_secrets]]
+binding = "JWT_SECRET"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "JWT_SECRET"
+
 # 県庁間距離マスタ等の D1 (距離制サーチャージ)。Refs #11
 #
 # ⚠️ D1 を作成するまで binding を有効化しない。placeholder の database_id だと
