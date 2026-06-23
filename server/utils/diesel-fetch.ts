@@ -65,3 +65,46 @@ export function pickLatestWeeklyXlsxUrl(links: string[]): string | null {
   }
   return best?.url ?? null
 }
+
+/** 公表予定日 1 件 (例: 6月24日(水)14:00 → date='2026-06-24', time='14:00', weekday='水') */
+export interface PublicationDate {
+  /** YYYY-MM-DD (JST。年はページに無いので now から補完) */
+  date: string
+  /** HH:MM (JST、公表時刻) */
+  time: string
+  /** 曜日 1 文字 (日月火水木金土) */
+  weekday: string
+}
+
+/**
+ * 結果ページ HTML の「公表予定日」セクションから予定日時を抽出する (純粋)。
+ * 例: 「6月24日（水）14：00」。年はテキストに無いので `now` (既定は現在) を基準に補完し、
+ * 月が現在月より小さい場合のみ翌年扱いにする (12月→1月の年跨ぎ補正)。日付昇順で返す。
+ */
+export function extractPublicationSchedule(html: string, now: Date = new Date()): PublicationDate[] {
+  // 全角括弧/コロン/数字を NFKC で半角化してから素直に match する
+  const text = html.normalize('NFKC')
+  const re = /(\d{1,2})月\s*(\d{1,2})日\s*\(\s*([日月火水木金土])\s*\)\s*(\d{1,2}):(\d{2})/g
+  const curYear = now.getUTCFullYear()
+  const curMonth = now.getUTCMonth() + 1
+  const seen = new Set<string>()
+  const out: PublicationDate[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const mon = Number(m[1])
+    const day = Number(m[2])
+    const weekday = m[3] as string
+    const hh = Number(m[4])
+    const mm = Number(m[5])
+    if (mon < 1 || mon > 12 || day < 1 || day > 31 || hh > 23 || mm > 59) continue
+    const year = mon < curMonth ? curYear + 1 : curYear
+    const date = `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const time = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+    const key = `${date} ${time}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ date, time, weekday })
+  }
+  out.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
+  return out
+}
