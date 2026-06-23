@@ -46,6 +46,16 @@ const nav: { key: Section; label: string; group: string }[] = [
 ]
 const groups = [...new Set(nav.map((n) => n.group))]
 
+// 直近に開いていたタブを復元する (リロードで毎回先頭タブに戻らないように)。
+// 認証コールバックが URL fragment を使うため hash は避け、localStorage に保存する。
+const ACTIVE_TAB_KEY = 'ichibanboshi-seikyu:active-tab'
+if (import.meta.client) {
+  const saved = localStorage.getItem(ACTIVE_TAB_KEY)
+  if (saved && nav.some((n) => n.key === saved)) {
+    active.value = saved as Section
+  }
+}
+
 // --- 届出書 (届出用紙)。段階上昇額テーブル + 時間制平均距離 + 燃費マスタ現在値。Refs #11-B ---
 const timeBasedDistances = TIME_BASED_DISTANCES
 // 基準価格 / 刻み幅は設定 (surcharge_settings) で変更可能。既定は notification-form の定数。
@@ -826,6 +836,8 @@ watch(
       if (fuelViewState.value === 'idle') void loadFuelView()
       if (settingsState.value === 'idle') void loadSurchargeSettingsView()
     }
+    // 開いたタブを保存 (次回リロード時に復元する)
+    if (import.meta.client) localStorage.setItem(ACTIVE_TAB_KEY, sec)
   },
   { immediate: true },
 )
@@ -1397,12 +1409,13 @@ watch(
             <h3 class="view-title">未計上 (要確認)</h3>
             <table class="grid">
               <thead>
-                <tr><th>得意先C</th><th>積地→卸地</th><th>車種C</th><th>売上日</th><th>理由</th></tr>
+                <tr><th>得意先C</th><th>積地</th><th>卸地</th><th>車種C</th><th>売上日</th><th>理由</th></tr>
               </thead>
               <tbody>
                 <tr v-for="(w, i) in reviewWarnings.slice(0, 200)" :key="i">
                   <td>{{ w.row.tokuiC }}</td>
-                  <td>{{ w.row.fromPref }}→{{ w.row.toPref }}</td>
+                  <td>{{ w.row.fromPref }}</td>
+                  <td>{{ w.row.toPref }}</td>
                   <td>{{ w.row.sharuC }}</td>
                   <td>{{ w.row.uriageDate }}</td>
                   <td>{{ w.warning }}</td>
@@ -1493,7 +1506,7 @@ watch(
             <table class="grid">
               <thead>
                 <tr>
-                  <th>売上日</th><th>積地→卸地</th><th>車種</th><th>運賃</th>
+                  <th>売上日</th><th>積地</th><th>卸地</th><th>車種</th><th>運賃</th>
                   <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
                   <th>燃費 (km/L)</th><th>サーチャージ (円)</th><th>状態</th>
                 </tr>
@@ -1501,7 +1514,8 @@ watch(
               <tbody>
                 <tr v-for="(d, i) in shimebiDetailRows" :key="i">
                   <td>{{ d.row.uriageDate }}</td>
-                  <td>{{ d.row.fromPref }}→{{ d.row.toPref }}</td>
+                  <td>{{ d.row.fromPref }}</td>
+                  <td>{{ d.row.toPref }}</td>
                   <td>{{ d.row.sharuC }}</td>
                   <td class="num">{{ d.row.unchin.toLocaleString() }}</td>
                   <td class="num">{{ dieselPriceForRow(d.row.uriageDate) ?? '—' }}</td>
