@@ -34,6 +34,8 @@ export interface MeisaiRow {
   unchin: number
   /** 入金予定日 = 請求日 (YYYY-MM-DD) */
   seikyuDate: string
+  /** 傭車先C ('000000' なら自車、それ以外は傭車)。計算には使わない表示用 */
+  subcontractorCode?: string
 }
 
 /**
