@@ -67,6 +67,82 @@ function distCell(from: string, to: string): string {
   return v === undefined ? '' : String(v)
 }
 
+// --- 燃費マスタ 新規登録 (行機能)。車種は一番星 (rust-ichibanboshi) から取得 ---
+interface Vehicle {
+  vehicle_code: string
+  vehicle_name: string
+}
+const vehicles = ref<Vehicle[]>([])
+const vehiclesLoaded = ref(false)
+const vehiclesError = ref('') // 一番星連携未設定/失敗時は手入力にフォールバック
+
+async function loadVehicles() {
+  try {
+    const res = await $fetch<{ vehicles: Vehicle[] }>('/api/vehicles')
+    vehicles.value = res.vehicles ?? []
+    vehiclesError.value = ''
+  } catch (err: unknown) {
+    // 503 (連携未設定) / 502 等 → 手入力フォールバック
+    vehiclesError.value =
+      err instanceof Error ? err.message : '車種マスタ(一番星)の取得に失敗しました'
+    vehicles.value = []
+  } finally {
+    vehiclesLoaded.value = true
+  }
+}
+
+// 新規登録フォーム
+const formSharuC = ref('')
+const formName = ref('')
+const formKmPerL = ref<number | null>(null)
+const formValidFrom = ref('')
+const formValidTo = ref('')
+const rowState = ref<'idle' | 'saving' | 'error'>('idle')
+const rowMsg = ref('')
+
+// 車種選択で車種名を自動補完 (ドロップダウン使用時)
+function onSelectVehicle() {
+  const v = vehicles.value.find((x) => x.vehicle_code === formSharuC.value)
+  if (v) formName.value = v.vehicle_name
+}
+
+async function onAddRow() {
+  rowState.value = 'saving'
+  rowMsg.value = ''
+  try {
+    await $fetch('/api/fuel-efficiency-row', {
+      method: 'POST',
+      body: {
+        sharuC: formSharuC.value,
+        name: formName.value,
+        kmPerL: formKmPerL.value,
+        validFrom: formValidFrom.value,
+        validTo: formValidTo.value,
+      },
+    })
+    rowState.value = 'idle'
+    formKmPerL.value = null
+    formValidTo.value = ''
+    await loadFuelView()
+  } catch (err: unknown) {
+    rowState.value = 'error'
+    rowMsg.value = err instanceof Error ? err.message : '登録に失敗しました'
+  }
+}
+
+async function onDeleteRow(sharuC: string, validFrom: string) {
+  try {
+    await $fetch('/api/fuel-efficiency-row', {
+      method: 'DELETE',
+      query: { sharuC, validFrom },
+    })
+    await loadFuelView()
+  } catch (err: unknown) {
+    fuelViewMsg.value = err instanceof Error ? err.message : '削除に失敗しました'
+    fuelViewState.value = 'error'
+  }
+}
+
 // --- 県庁間距離マスタ CSV upload (距離制 input)。Refs #11 ---
 type UploadState = 'idle' | 'uploading' | 'done' | 'error'
 const distUploadState = ref<UploadState>('idle')
@@ -163,7 +239,10 @@ watch(
   active,
   (sec) => {
     if (sec === 'distance' && distViewState.value === 'idle') void loadDistanceView()
-    if (sec === 'fuel' && fuelViewState.value === 'idle') void loadFuelView()
+    if (sec === 'fuel') {
+      if (fuelViewState.value === 'idle') void loadFuelView()
+      if (!vehiclesLoaded.value) void loadVehicles()
+    }
   },
   { immediate: true },
 )
@@ -274,6 +353,54 @@ watch(
           <li v-if="fuelUploadWarnings.length > 20">…他 {{ fuelUploadWarnings.length - 20 }} 件</li>
         </ul>
 
+        <!-- 新規登録 (行機能)。車種は一番星から取得 -->
+        <h3 class="view-title">新規登録</h3>
+        <form class="row-form" @submit.prevent="onAddRow">
+          <label>
+            車種
+            <!-- 一番星から取得できれば選択、未設定/失敗時は車種C 手入力にフォールバック -->
+            <select
+              v-if="vehicles.length"
+              v-model="formSharuC"
+              required
+              @change="onSelectVehicle"
+            >
+              <option value="" disabled>選択…</option>
+              <option v-for="v in vehicles" :key="v.vehicle_code" :value="v.vehicle_code">
+                {{ v.vehicle_code }} {{ v.vehicle_name }}
+              </option>
+            </select>
+            <input
+              v-else
+              v-model="formSharuC"
+              placeholder="車種C (例 04)"
+              required
+              size="6"
+            />
+          </label>
+          <label>
+            車種名
+            <input v-model="formName" placeholder="大型幌" />
+          </label>
+          <label>
+            燃費 km/L
+            <input v-model.number="formKmPerL" type="number" step="0.1" min="0" required />
+          </label>
+          <label>
+            有効開始
+            <input v-model="formValidFrom" type="date" required />
+          </label>
+          <label>
+            有効終了 (任意)
+            <input v-model="formValidTo" type="date" />
+          </label>
+          <button class="btn" type="submit" :disabled="rowState === 'saving'">追加</button>
+        </form>
+        <p v-if="vehiclesError" class="status warn-note">
+          車種マスタ(一番星)未取得のため車種C は手入力です: {{ vehiclesError }}
+        </p>
+        <p v-if="rowState === 'error'" class="status err">{{ rowMsg }}</p>
+
         <!-- 現在の登録内容 -->
         <h3 class="view-title">現在の登録内容</h3>
         <p v-if="fuelViewState === 'loading'" class="status">読込中…</p>
@@ -287,6 +414,7 @@ watch(
               <th>燃費 (km/L)</th>
               <th>有効開始</th>
               <th>有効終了</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -296,6 +424,9 @@ watch(
               <td class="num">{{ e.kmPerL }}</td>
               <td>{{ e.validFrom }}</td>
               <td>{{ e.validTo ?? '（無期限）' }}</td>
+              <td>
+                <button class="link-del" @click="onDeleteRow(e.sharuC, e.validFrom)">削除</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -494,6 +625,37 @@ nav {
 }
 .grid td.num {
   text-align: right;
+}
+.row-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+.row-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+  color: #374151;
+  gap: 0.2rem;
+}
+.row-form input,
+.row-form select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.85rem;
+}
+.warn-note {
+  color: #b45309;
+}
+.link-del {
+  border: 0;
+  background: transparent;
+  color: #b91c1c;
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-decoration: underline;
 }
 .matrix-scroll {
   max-height: 460px;

@@ -141,6 +141,28 @@ export function serializeFuelEfficiencyCsv(entries: FuelEfficiencyEntry[]): stri
 }
 
 /**
+ * 単一の燃費レコード (新規登録 行機能の入力) を検証する。
+ * 問題があればエラーメッセージ、無ければ null。CSV parse と同じ規則。
+ */
+export function validateFuelEntry(e: {
+  sharuC: string
+  kmPerL: number
+  validFrom: string
+  validTo?: string
+}): string | null {
+  if (!e.sharuC) return '車種C が空です'
+  if (!Number.isFinite(e.kmPerL) || e.kmPerL <= 0) return '燃費は 0 より大きい数値で入力してください'
+  if (!DATE_RE.test(e.validFrom)) return '有効開始は YYYY-MM-DD 形式で入力してください'
+  if (e.validTo !== undefined && e.validTo !== '' && !DATE_RE.test(e.validTo)) {
+    return '有効終了は YYYY-MM-DD 形式 (または空) で入力してください'
+  }
+  if (e.validTo !== undefined && e.validTo !== '' && e.validTo < e.validFrom) {
+    return '有効終了が有効開始より前です'
+  }
+  return null
+}
+
+/**
  * 指定日 (YYYY-MM-DD) 時点で有効な車種別燃費 km/L を引く。
  * 期間が重なる場合は有効開始が最も新しいものを採用。該当なしは undefined。
  */

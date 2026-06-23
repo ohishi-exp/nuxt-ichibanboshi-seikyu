@@ -4,6 +4,8 @@ import {
   entriesToRows,
   loadFuelEfficiency,
   replaceFuelEfficiency,
+  upsertFuelEntry,
+  deleteFuelEntry,
   ensureFuelSchema,
   FUEL_SCHEMA_DDL,
   type FuelRow,
@@ -66,8 +68,28 @@ class FakeStmt implements D1PreparedStatement {
     return { results: [] }
   }
   async run(): Promise<unknown> {
-    if (this.sql.startsWith('DELETE FROM fuel_efficiency')) this.db.rows = []
-    else if (this.sql.startsWith('INSERT INTO fuel_efficiency')) {
+    if (this.sql.startsWith('DELETE FROM fuel_efficiency WHERE')) {
+      // 1 行削除 (PK = sharu_c, valid_from)
+      const [sharuC, validFrom] = this.binds as [string, string]
+      this.db.rows = this.db.rows.filter(
+        (r) => !(r.sharu_c === sharuC && r.valid_from === validFrom),
+      )
+    } else if (this.sql.startsWith('DELETE FROM fuel_efficiency')) {
+      this.db.rows = []
+    } else if (this.sql.startsWith('INSERT OR REPLACE INTO fuel_efficiency')) {
+      // upsert: 同 PK を置換
+      const row: FuelRow = {
+        sharu_c: this.binds[0] as string,
+        name: this.binds[1] as string,
+        km_per_l: this.binds[2] as number,
+        valid_from: this.binds[3] as string,
+        valid_to: this.binds[4] as string,
+      }
+      this.db.rows = this.db.rows.filter(
+        (r) => !(r.sharu_c === row.sharu_c && r.valid_from === row.valid_from),
+      )
+      this.db.rows.push(row)
+    } else if (this.sql.startsWith('INSERT INTO fuel_efficiency')) {
       for (let i = 0; i < this.binds.length; i += 5) {
         this.db.rows.push({
           sharu_c: this.binds[i] as string,
@@ -120,5 +142,41 @@ describe('loadFuelEfficiency / replaceFuelEfficiency (fake D1)', () => {
     await replaceFuelEfficiency(db, entries)
     await replaceFuelEfficiency(db, entries)
     expect(db.rows).toHaveLength(3)
+  })
+})
+
+describe('upsertFuelEntry / deleteFuelEntry (行機能)', () => {
+  it('1 行を追加でき、同 PK は置換される', async () => {
+    const db = new FakeD1()
+    await upsertFuelEntry(db, { sharuC: '04', name: '大型幌', kmPerL: 3.5, validFrom: '2026-01-01' })
+    expect(db.rows).toHaveLength(1)
+    // 同 (車種C, 有効開始) を再投入 → 置換 (重複しない)
+    await upsertFuelEntry(db, { sharuC: '04', name: '大型幌', kmPerL: 3.8, validFrom: '2026-01-01' })
+    expect(db.rows).toHaveLength(1)
+    expect(db.rows[0]?.km_per_l).toBe(3.8)
+    // validTo 省略は空文字で入る
+    expect(db.rows[0]?.valid_to).toBe('')
+  })
+
+  it('validTo つきも投入できる', async () => {
+    const db = new FakeD1()
+    await upsertFuelEntry(db, {
+      sharuC: '16',
+      name: 'トレーラー',
+      kmPerL: 3.0,
+      validFrom: '2026-01-01',
+      validTo: '2026-03-31',
+    })
+    const loaded = await loadFuelEfficiency(db)
+    expect(loaded[0]?.validTo).toBe('2026-03-31')
+  })
+
+  it('1 行を PK 指定で削除する (他行は残る)', async () => {
+    const db = new FakeD1()
+    await upsertFuelEntry(db, { sharuC: '04', name: '大型幌', kmPerL: 3.5, validFrom: '2026-01-01' })
+    await upsertFuelEntry(db, { sharuC: '07', name: 'トレーラー', kmPerL: 3.0, validFrom: '2026-01-01' })
+    await deleteFuelEntry(db, '04', '2026-01-01')
+    expect(db.rows).toHaveLength(1)
+    expect(db.rows[0]?.sharu_c).toBe('07')
   })
 })
