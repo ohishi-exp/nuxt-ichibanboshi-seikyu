@@ -365,16 +365,23 @@ const dieselWeeklyByMonth = computed(() => {
   return [...map.entries()]
     .map(([month, weeks]) => {
       const sorted = weeks.sort((a, b) => a.date.localeCompare(b.date))
-      const avg = Math.round((sorted.reduce((s, w) => s + w.price, 0) / sorted.length) * 10) / 10
-      return { month, weeks: sorted, avg }
+      const mean = sorted.reduce((s, w) => s + w.price, 0) / sorted.length
+      // avg = 登録値と同じ四捨五入 (小数1桁)。avgRaw = 丸め前 (検算で四捨五入方向を確認)。
+      const avg = Math.round(mean * 10) / 10
+      const avgRaw = Math.round(mean * 100) / 100
+      return { month, weeks: sorted, avg, avgRaw }
     })
     .sort((a, b) => b.month.localeCompare(a.month))
 })
 
 // 月 -> 週次内訳 の索引 (現在の登録内容テーブルの行展開で検算表示する)。
 const dieselWeeklyMap = computed(() => {
-  const m = new Map<string, { weeks: { date: string; price: number }[]; avg: number }>()
-  for (const g of dieselWeeklyByMonth.value) m.set(g.month, { weeks: g.weeks, avg: g.avg })
+  const m = new Map<
+    string,
+    { weeks: { date: string; price: number }[]; avg: number; avgRaw: number }
+  >()
+  for (const g of dieselWeeklyByMonth.value)
+    m.set(g.month, { weeks: g.weeks, avg: g.avg, avgRaw: g.avgRaw })
   return m
 })
 // 現在の登録内容テーブルで週次内訳 (検算) を展開している月。
@@ -1213,6 +1220,9 @@ watch(
                           class="num weekly-avg-col"
                         >
                           {{ dieselWeeklyMap.get(e.month)!.avg }}
+                          <span class="avg-raw"
+                            >(実際 {{ dieselWeeklyMap.get(e.month)!.avgRaw }} → 四捨五入)</span
+                          >
                         </td>
                       </tr>
                     </tbody>
@@ -1924,6 +1934,12 @@ nav {
   font-weight: 600;
   vertical-align: middle;
   border-left: 1px solid #bfdbfe;
+}
+.avg-raw {
+  display: block;
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: #6b7280;
 }
 .month-first td {
   border-top: 2px solid #d1d5db;
