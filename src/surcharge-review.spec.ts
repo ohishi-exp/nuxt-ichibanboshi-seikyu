@@ -41,9 +41,9 @@ describe('isAdjustmentRow', () => {
 
 describe('mapToMeisaiRows 品名 passthrough', () => {
   it('item_code/item_name を itemCode/itemName に写像する', () => {
-    const [m] = mapToMeisaiRows([row({ item_code: '0000', item_name: '※　請求一括調整明細　※' })])
-    expect(m.itemCode).toBe('0000')
-    expect(m.itemName).toBe('※　請求一括調整明細　※')
+    const rows = mapToMeisaiRows([row({ item_code: '0000', item_name: '※　請求一括調整明細　※' })])
+    expect(rows[0]?.itemCode).toBe('0000')
+    expect(rows[0]?.itemName).toBe('※　請求一括調整明細　※')
   })
 })
 
