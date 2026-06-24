@@ -1553,6 +1553,8 @@ watch(
                 :date="shimebiDate"
                 :rows="shimebiDetailRows"
                 :diesel-map="shimebiDieselMap"
+                :debug-enabled="isDebugUser"
+                @debug="onDebugIchiban"
               />
             </div>
           </div>
@@ -1571,6 +1573,8 @@ watch(
                 :date="shimebiDate"
                 :rows="shimebiDetailRows"
                 :diesel-map="shimebiDieselMap"
+                :debug-enabled="isDebugUser"
+                @debug="onDebugIchiban"
               />
             </div>
           </div>
