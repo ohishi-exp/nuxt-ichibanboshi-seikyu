@@ -727,6 +727,13 @@ function onShowShimebiDetail(code: string) {
   // 下/右/モーダル: ページ内でトグル表示
   shimebiDetailCode.value = shimebiDetailCode.value === code ? null : code
 }
+
+// 明細ヘッダの「再取得」: 現在の締め日を一番星から再取得し、開いている明細は維持する。
+async function onRefetchShimebiDetail() {
+  const keep = shimebiDetailCode.value
+  await onRunShimebi()
+  if (keep) shimebiDetailCode.value = keep
+}
 /** 当月軽油価格 (円/L) を行の売上月から引く。無ければ null */
 function dieselPriceForRow(uriageDate: string): number | null {
   return shimebiDieselMap.value[uriageDate.slice(0, 7)] ?? null
@@ -1631,8 +1638,10 @@ watch(
                 :diesel-map="shimebiDieselMap"
                 :skipped-row-ids="skippedRowIds"
                 :debug-enabled="isDebugUser"
+                :can-refetch="true"
                 @debug="onDebugIchiban"
                 @toggle-skip="onToggleSkip"
+                @refetch="onRefetchShimebiDetail"
               />
             </div>
           </div>
@@ -1653,8 +1662,10 @@ watch(
                 :diesel-map="shimebiDieselMap"
                 :skipped-row-ids="skippedRowIds"
                 :debug-enabled="isDebugUser"
+                :can-refetch="true"
                 @debug="onDebugIchiban"
                 @toggle-skip="onToggleSkip"
+                @refetch="onRefetchShimebiDetail"
               />
             </div>
           </div>
