@@ -26,6 +26,10 @@ export interface DieselImportResult {
   months?: number
   latestMonth?: string
   latestPrice?: number
+  /** 週次 全国平均を保存した件数 (検算表示の元データ)。0 は週次未保存 */
+  weeklyWritten?: number
+  /** 週次保存が失敗した時のエラー文言 (月次取込は成立済み)。診断用 */
+  weeklyError?: string
 }
 
 /** 結果ページから最新の週次 xlsx URL + 公表日キー (YYMMDD) を解決する */
@@ -81,13 +85,18 @@ export async function importDieselFromXlsxUrl(
   }
   await upsertManyDieselEntries(db, entries)
 
-  // 検算用に週次 全国平均も保存 (月次平均の根拠)。失敗しても月次取込は成立済みなので握る。
+  // 検算用に週次 全国平均も保存 (月次平均の根拠)。失敗しても月次取込は成立済みなので
+  // throw はしないが、件数とエラーを結果に載せて診断可能にする (silent fail にしない)。
+  let weeklyWritten = 0
+  let weeklyError: string | undefined
   try {
     const weekly = extractWeeklyDieselPrices(aoa, { recentMonths })
     await ensureDieselWeeklySchema(db)
     await upsertManyDieselWeekly(db, weekly)
+    weeklyWritten = weekly.length
   } catch (e: unknown) {
-    console.warn('diesel weekly upsert failed:', e instanceof Error ? e.message : e)
+    weeklyError = e instanceof Error ? e.message : String(e)
+    console.warn('diesel weekly upsert failed:', weeklyError)
   }
 
   const latest = entries[entries.length - 1]
@@ -98,6 +107,8 @@ export async function importDieselFromXlsxUrl(
     months: entries.length,
     latestMonth: latest?.month,
     latestPrice: latest?.price,
+    weeklyWritten,
+    weeklyError,
   }
 }
 
