@@ -1184,7 +1184,11 @@ watch(
     if (sec === 'diesel' && dieselViewState.value === 'idle') void loadDieselView()
     if (sec === 'surchargeCustomers' && scState.value === 'idle') void loadSurchargeCustomers()
     if (sec === 'shimebi' && scState.value === 'idle') void loadSurchargeCustomers()
-    if (sec === 'inputStaff' && scState.value === 'idle') void loadSurchargeCustomers()
+    // 入力者別タブは開いた時に前月分を自動取得 (ボタン不要)。loadSurchargeCustomers は
+    // onRunInputStaff 内の fetchComputedRange が呼ぶので個別呼び出しは不要。
+    if (sec === 'inputStaff' && isState.value === 'idle' && import.meta.client) {
+      void onRunInputStaff()
+    }
     // 届出書も燃費マスタ現在値を載せるため fuel を読む + サーチャージ設定を読む
     if (sec === 'notification') {
       if (fuelViewState.value === 'idle') void loadFuelView()
@@ -1913,10 +1917,15 @@ watch(
           一覧と同じ内容を CSV 出力できます。
         </p>
         <div class="actions">
-          <button class="btn" :disabled="isState === 'loading'" @click="onRunInputStaff">
-            表示 (前月分を取得)
-          </button>
           <span v-if="isTargetMonth" class="lead-note">対象売上年月: {{ isTargetMonth }}</span>
+          <button
+            class="btn"
+            :disabled="isState === 'loading'"
+            title="前月分を取り直す"
+            @click="onRunInputStaff"
+          >
+            {{ isState === 'loading' ? '取得中…' : '再取得' }}
+          </button>
           <label class="inline-label">
             入力者
             <select v-model="isSelectedStaff" :disabled="isState !== 'done'">
