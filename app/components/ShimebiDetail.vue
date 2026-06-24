@@ -21,10 +21,22 @@ const props = withDefaults(
     canRefetch?: boolean
     /** 再取得中 (ボタン disable + ラベル切替) */
     refetching?: boolean
+    /** 行単位 再取得中の row_id 集合 (その行にスピナー) */
+    refetchingRowIds?: Set<string>
   }>(),
-  { skippedRowIds: () => new Set<string>() },
+  { skippedRowIds: () => new Set<string>(), refetchingRowIds: () => new Set<string>() },
 )
-const emit = defineEmits<{ debug: []; toggleSkip: [rowId: string]; refetch: [] }>()
+const emit = defineEmits<{
+  debug: []
+  toggleSkip: [rowId: string]
+  refetch: []
+  refetchRow: [rowId: string]
+}>()
+
+/** 行が単体再取得中か */
+function isRowRefetching(rowId?: string): boolean {
+  return !!rowId && props.refetchingRowIds.has(rowId)
+}
 
 function dieselPriceForRow(uriageDate: string): number | null {
   return props.dieselMap[uriageDate.slice(0, 7)] ?? null
@@ -86,6 +98,7 @@ function isKumiawase(d: SurchargeResult): boolean {
           <th>売上日</th><th>区分</th><th>積地</th><th>卸地</th><th>車種</th><th>車番</th><th>品名</th><th>運賃</th>
           <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
           <th>燃費 (km/L)</th><th>計算 (円)</th><th>実額 (円)</th><th>差額 (円)</th><th>照合</th><th>状態</th>
+          <th v-if="canRefetch">再取得</th>
           <th>計算しない</th>
         </tr>
       </thead>
@@ -125,6 +138,19 @@ function isKumiawase(d: SurchargeResult): boolean {
             <span v-else-if="d.status === 'warning'" class="warn-note">{{ d.warning }}</span>
             <span v-else class="badge-off">対象外</span>
           </td>
+          <td v-if="canRefetch" class="skip-col">
+            <span v-if="isRowRefetching(d.row.rowId)" class="spinner spinner-sm" aria-label="再取得中" />
+            <button
+              v-else
+              type="button"
+              class="btn-row-refetch"
+              :disabled="!d.row.rowId"
+              :title="d.row.rowId ? 'この行だけ一番星から再取得して差し替える' : '行 ID 未取得のため再取得不可 (producer 要更新)'"
+              @click="d.row.rowId && emit('refetchRow', d.row.rowId)"
+            >
+              🔄
+            </button>
+          </td>
           <td class="skip-col">
             <input
               type="checkbox"
@@ -163,6 +189,25 @@ function isKumiawase(d: SurchargeResult): boolean {
   border-top-color: #2563eb;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+.spinner-sm {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border-width: 2px;
+  vertical-align: middle;
+}
+.btn-row-refetch {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0.1rem 0.2rem;
+}
+.btn-row-refetch:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 .refetch-text {
   font-size: 0.85rem;
