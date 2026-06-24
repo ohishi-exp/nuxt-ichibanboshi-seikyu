@@ -61,6 +61,12 @@ describe('mapToMeisaiRows', () => {
     expect(mapToMeisaiRows(ROWS)[1]?.actualSurcharge).toBe(0) // 欠落 → 0
   })
 
+  it('row_id (管理年月日+管理C) を rowId に写像、欠落は undefined', () => {
+    const rows: IchibanSurchargeRow[] = [{ ...ROWS[0]!, row_id: '20260621-1001' }]
+    expect(mapToMeisaiRows(rows)[0]?.rowId).toBe('20260621-1001')
+    expect(mapToMeisaiRows(ROWS)[1]?.rowId).toBeUndefined() // 欠落 → undefined (skip 不可)
+  })
+
   it('請求日 null は空文字に正規化', () => {
     expect(mapToMeisaiRows(ROWS)[1]?.seikyuDate).toBe('')
   })

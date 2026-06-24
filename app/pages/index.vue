@@ -669,6 +669,19 @@ const shimebiRows = ref<ShimebiCustomerRow[]>([])
 // 名前クリックで明細を出すため、締め日一致行の per-row 計算結果と当月軽油価格を保持。
 const shimebiResults = ref<SurchargeResult[]>([])
 const shimebiDieselMap = ref<Record<string, number>>({})
+// skip (計算しない) 登録済みの行 ID。集計から除外する。
+const skippedRowIds = ref<Set<string>>(new Set())
+
+/** skip 行を除いた計算結果 (集計対象) */
+function nonSkippedResults(results: SurchargeResult[]): SurchargeResult[] {
+  return results.filter((r) => !(r.row.rowId && skippedRowIds.value.has(r.row.rowId)))
+}
+/** shimebiResults + skip + 登録有無 から取引先サマリを再集計 */
+function recomputeShimebiRows() {
+  shimebiRows.value = aggregateByCustomer(nonSkippedResults(shimebiResults.value), (code) =>
+    registeredCodes.value.has(code),
+  )
+}
 const shimebiDetailCode = ref<string | null>(null)
 const shimebiDetailRows = computed(() =>
   shimebiResults.value.filter((r) => r.row.tokuiC === shimebiDetailCode.value),
@@ -699,7 +712,14 @@ function onShowShimebiDetail(code: string) {
     const name = shimebiRows.value.find((r) => r.customerCode === code)?.customerName ?? ''
     localStorage.setItem(
       SHIMEBI_DETAIL_PAYLOAD_KEY,
-      JSON.stringify({ code, name, date: shimebiDate.value, rows, dieselMap: shimebiDieselMap.value }),
+      JSON.stringify({
+        code,
+        name,
+        date: shimebiDate.value,
+        rows,
+        dieselMap: shimebiDieselMap.value,
+        skippedRowIds: [...skippedRowIds.value],
+      }),
     )
     window.open('/shimebi-detail', '_blank')
     return
@@ -855,7 +875,14 @@ async function onRunShimebi() {
     // 締め日 (請求日) が一致する行のみ集計
     const onDate = summary.results.filter((r) => (r.row.seikyuDate || '').slice(0, 10) === date)
     shimebiResults.value = onDate
-    shimebiRows.value = aggregateByCustomer(onDate, (code) => registeredCodes.value.has(code))
+    // skip (計算しない) 登録を読み込み、集計から除外する
+    try {
+      const sk = await $fetch<{ rowIds: string[] }>('/api/surcharge-skips')
+      skippedRowIds.value = new Set(sk.rowIds)
+    } catch {
+      skippedRowIds.value = new Set()
+    }
+    recomputeShimebiRows()
     shimebiState.value = 'done'
     if (shimebiRows.value.length === 0) {
       shimebiMsg.value = 'この締め日 (請求日) に請求のある取引先がありません'
@@ -884,6 +911,35 @@ async function onToggleShimebiRegister(row: ShimebiCustomerRow) {
     }
   } catch (err: unknown) {
     shimebiMsg.value = err instanceof Error ? err.message : '登録更新に失敗しました'
+  }
+}
+
+// 明細行の「計算しない (skip)」を切替え、行 ID (管理年月日+管理C) で永続化する。
+async function onToggleSkip(rowId: string) {
+  if (!rowId) return
+  const wasSkipped = skippedRowIds.value.has(rowId)
+  try {
+    if (wasSkipped) {
+      await $fetch('/api/surcharge-skips', { method: 'DELETE', query: { rowId } })
+      skippedRowIds.value.delete(rowId)
+    } else {
+      const r = shimebiResults.value.find((x) => x.row.rowId === rowId)
+      await $fetch('/api/surcharge-skips', {
+        method: 'POST',
+        body: {
+          rowId,
+          customerCode: r?.row.tokuiC,
+          saleDate: r?.row.uriageDate,
+          billingDate: r?.row.seikyuDate,
+        },
+      })
+      skippedRowIds.value.add(rowId)
+    }
+    // Set の mutation は reactivity を起こさないので再代入してから再集計
+    skippedRowIds.value = new Set(skippedRowIds.value)
+    recomputeShimebiRows()
+  } catch (err: unknown) {
+    shimebiMsg.value = err instanceof Error ? err.message : 'skip 更新に失敗しました'
   }
 }
 
@@ -1573,8 +1629,10 @@ watch(
                 :date="shimebiDate"
                 :rows="shimebiDetailRows"
                 :diesel-map="shimebiDieselMap"
+                :skipped-row-ids="skippedRowIds"
                 :debug-enabled="isDebugUser"
                 @debug="onDebugIchiban"
+                @toggle-skip="onToggleSkip"
               />
             </div>
           </div>
@@ -1593,8 +1651,10 @@ watch(
                 :date="shimebiDate"
                 :rows="shimebiDetailRows"
                 :diesel-map="shimebiDieselMap"
+                :skipped-row-ids="skippedRowIds"
                 :debug-enabled="isDebugUser"
                 @debug="onDebugIchiban"
+                @toggle-skip="onToggleSkip"
               />
             </div>
           </div>

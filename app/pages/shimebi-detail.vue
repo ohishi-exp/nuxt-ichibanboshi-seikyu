@@ -13,10 +13,12 @@ interface DetailPayload {
   date: string
   rows: SurchargeResult[]
   dieselMap: Record<string, number>
+  skippedRowIds?: string[]
 }
 
 const payload = ref<DetailPayload | null>(null)
 const error = ref('')
+const skippedRowIds = ref<Set<string>>(new Set())
 
 onMounted(() => {
   try {
@@ -25,11 +27,40 @@ onMounted(() => {
       error.value = '表示データがありません (締め日別画面の取引先名から開いてください)'
       return
     }
-    payload.value = JSON.parse(raw) as DetailPayload
+    const p = JSON.parse(raw) as DetailPayload
+    payload.value = p
+    skippedRowIds.value = new Set(p.skippedRowIds ?? [])
   } catch {
     error.value = '表示データの読込に失敗しました'
   }
 })
+
+// 別タブでも skip を永続化できるよう、API を直接叩いてローカル集合を更新する。
+async function onToggleSkip(rowId: string) {
+  if (!rowId) return
+  const wasSkipped = skippedRowIds.value.has(rowId)
+  try {
+    if (wasSkipped) {
+      await $fetch('/api/surcharge-skips', { method: 'DELETE', query: { rowId } })
+      skippedRowIds.value.delete(rowId)
+    } else {
+      const r = payload.value?.rows.find((x) => x.row.rowId === rowId)
+      await $fetch('/api/surcharge-skips', {
+        method: 'POST',
+        body: {
+          rowId,
+          customerCode: r?.row.tokuiC,
+          saleDate: r?.row.uriageDate,
+          billingDate: r?.row.seikyuDate,
+        },
+      })
+      skippedRowIds.value.add(rowId)
+    }
+    skippedRowIds.value = new Set(skippedRowIds.value)
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : 'skip 更新に失敗しました'
+  }
+}
 
 useHead({ title: '締め日別 明細' })
 </script>
@@ -44,6 +75,8 @@ useHead({ title: '締め日別 明細' })
       :date="payload.date"
       :rows="payload.rows"
       :diesel-map="payload.dieselMap"
+      :skipped-row-ids="skippedRowIds"
+      @toggle-skip="onToggleSkip"
     />
   </div>
 </template>
