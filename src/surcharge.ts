@@ -36,6 +36,10 @@ export interface MeisaiRow {
   seikyuDate: string
   /** 傭車先C ('000000' なら自車、それ以外は傭車)。計算には使わない表示用 */
   subcontractorCode?: string
+  /** 品名C (表示用、計算には使わない) */
+  itemCode?: string
+  /** 品名N (表示用、計算には使わない) */
+  itemName?: string
 }
 
 /**

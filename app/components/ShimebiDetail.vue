@@ -42,7 +42,7 @@ function dieselPriceForRow(uriageDate: string): number | null {
     <table class="grid">
       <thead>
         <tr>
-          <th>売上日</th><th>区分</th><th>積地</th><th>卸地</th><th>車種</th><th>運賃</th>
+          <th>売上日</th><th>区分</th><th>積地</th><th>卸地</th><th>車種</th><th>品名</th><th>運賃</th>
           <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
           <th>燃費 (km/L)</th><th>サーチャージ (円)</th><th>状態</th>
         </tr>
@@ -54,6 +54,7 @@ function dieselPriceForRow(uriageDate: string): number | null {
           <td>{{ d.row.fromPref }}</td>
           <td>{{ d.row.toPref }}</td>
           <td>{{ d.row.sharuC }}</td>
+          <td>{{ d.row.itemName || '—' }}</td>
           <td class="num">{{ d.row.unchin.toLocaleString() }}</td>
           <td class="num">{{ dieselPriceForRow(d.row.uriageDate) ?? '—' }}</td>
           <td class="num">{{ d.increment ?? '—' }}</td>
