@@ -56,6 +56,11 @@ export interface MeisaiRow {
    * producer 旧版欠落時は undefined (= skip 不可)。
    */
   rowId?: string
+  /**
+   * 入力担当C (運転日報明細の入力担当コード)。締め日別画面の「入力者」絞り込み用。
+   * producer (rust-ichibanboshi #12 以降) で返る。旧版は欠落 (undefined)。
+   */
+  inputStaffCode?: string
 }
 
 /**

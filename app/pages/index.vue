@@ -676,17 +676,43 @@ const shimebiResults = ref<SurchargeResult[]>([])
 const shimebiDieselMap = ref<Record<string, number>>({})
 // skip (計算しない) 登録済みの行 ID。集計から除外する。
 const skippedRowIds = ref<Set<string>>(new Set())
+// 入力者 (入力担当C) 絞り込み。空 ('') = 入力者指定なし → 登録済み取引先のみ表示。
+const selectedInputStaff = ref('')
+
+/** 取得済み結果に含まれる入力担当C の一覧 (昇順、空欄除く)。入力者ドロップダウン用 */
+const inputStaffOptions = computed(() => {
+  const set = new Set<string>()
+  for (const r of shimebiResults.value) {
+    const code = r.row.inputStaffCode
+    if (code) set.add(code)
+  }
+  return [...set].sort()
+})
 
 /** skip 行を除いた計算結果 (集計対象) */
 function nonSkippedResults(results: SurchargeResult[]): SurchargeResult[] {
   return results.filter((r) => !(r.row.rowId && skippedRowIds.value.has(r.row.rowId)))
 }
-/** shimebiResults + skip + 登録有無 から取引先サマリを再集計 */
+/**
+ * shimebiResults + skip + 入力者 + 登録有無 から取引先サマリを再集計する。
+ * - 入力者を選択中: その入力担当C の行のみを集計 (登録 / 未登録どちらも表示)
+ * - 入力者なし (空): 登録済み (サーチャージ対象) 取引先のみ表示
+ */
 function recomputeShimebiRows() {
-  shimebiRows.value = aggregateByCustomer(nonSkippedResults(shimebiResults.value), (code) =>
-    registeredCodes.value.has(code),
-  )
+  let results = nonSkippedResults(shimebiResults.value)
+  if (selectedInputStaff.value) {
+    results = results.filter((r) => r.row.inputStaffCode === selectedInputStaff.value)
+  }
+  let rows = aggregateByCustomer(results, (code) => registeredCodes.value.has(code))
+  if (!selectedInputStaff.value) {
+    rows = rows.filter((r) => r.registered)
+  }
+  shimebiRows.value = rows
 }
+// 入力者の選択を変えたら再集計 (再取得は不要 — 取得済み結果の絞り込みだけ)
+watch(selectedInputStaff, () => {
+  if (shimebiState.value === 'done') recomputeShimebiRows()
+})
 const shimebiDetailCode = ref<string | null>(null)
 const shimebiDetailRows = computed(() =>
   shimebiResults.value.filter((r) => r.row.tokuiC === shimebiDetailCode.value),
@@ -949,6 +975,7 @@ async function onRunShimebi() {
   shimebiMsg.value = ''
   shimebiRows.value = []
   shimebiDetailCode.value = null
+  selectedInputStaff.value = '' // 新規検索は「登録済みのみ」(指定なし) から始める
   try {
     const r = await fetchAndComputeShimebi(date)
     if (!r.ok) {
@@ -958,7 +985,9 @@ async function onRunShimebi() {
     }
     shimebiState.value = 'done'
     if (shimebiRows.value.length === 0) {
-      shimebiMsg.value = 'この締め日 (請求日) に請求のある取引先がありません'
+      shimebiMsg.value = selectedInputStaff.value
+        ? `入力者 ${selectedInputStaff.value} の請求がこの締め日にありません`
+        : 'この締め日 (請求日) に「登録済み (サーチャージ対象)」の取引先がありません'
     }
   } catch (err: unknown) {
     shimebiState.value = 'error'
@@ -1617,6 +1646,15 @@ watch(
           <button class="btn" :disabled="shimebiState === 'loading'" @click="onRunShimebi">
             表示
           </button>
+          <label class="inline-label">
+            入力者
+            <select v-model="selectedInputStaff" :disabled="shimebiState !== 'done'">
+              <option value="">指定なし (登録済みのみ)</option>
+              <option v-for="code in inputStaffOptions" :key="code" :value="code">
+                {{ code }}
+              </option>
+            </select>
+          </label>
           <label class="inline-label">
             明細の表示
             <select v-model="shimebiDetailMode">
