@@ -17,10 +17,14 @@ const props = withDefaults(
     skippedRowIds?: Set<string>
     /** m.tama.ramu のみ true。一番星 生データ取得 (debug) ボタンの出し分け */
     debugEnabled?: boolean
+    /** 再取得ボタンを出すか (親が refetch を処理できる場合 true)。別タブ表示では false */
+    canRefetch?: boolean
+    /** 再取得中 (ボタン disable + ラベル切替) */
+    refetching?: boolean
   }>(),
   { skippedRowIds: () => new Set<string>() },
 )
-const emit = defineEmits<{ debug: []; toggleSkip: [rowId: string] }>()
+const emit = defineEmits<{ debug: []; toggleSkip: [rowId: string]; refetch: [] }>()
 
 function dieselPriceForRow(uriageDate: string): number | null {
   return props.dieselMap[uriageDate.slice(0, 7)] ?? null
@@ -43,6 +47,16 @@ function isKumiawase(d: SurchargeResult): boolean {
   <div>
     <h3 class="view-title">
       明細・計算根拠 — {{ code }} {{ name }}（締め日 {{ date }}）
+      <button
+        v-if="canRefetch"
+        type="button"
+        class="btn-refetch-inline"
+        :disabled="refetching"
+        title="この締め日のデータを一番星から再取得して明細を更新する"
+        @click="emit('refetch')"
+      >
+        {{ refetching ? '再取得中…' : '🔄 再取得' }}
+      </button>
       <button
         v-if="debugEnabled"
         type="button"
@@ -193,6 +207,24 @@ function isKumiawase(d: SurchargeResult): boolean {
 .warn-note {
   font-size: 0.78rem;
   color: #b45309;
+}
+.btn-refetch-inline {
+  margin-left: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.btn-refetch-inline:hover {
+  background: #1d4ed8;
+}
+.btn-refetch-inline:disabled {
+  background: #93c5fd;
+  cursor: default;
 }
 .btn-debug-inline {
   margin-left: 0.75rem;
