@@ -9,6 +9,7 @@ import {
   type IchibanSurchargeRow,
 } from '../../src/surcharge-review'
 import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
+import { replaceResultsByRowId } from '../../src/shimebi-merge'
 import { SHIMEBI_DETAIL_PAYLOAD_KEY } from '../../src/shimebi-detail-key'
 import { buildShimebiCsv } from '../../src/shimebi-csv'
 import {
@@ -666,6 +667,8 @@ const shimebiDate = ref('') // YYYY-MM-DD (締め日 = 請求日)
 const shimebiState = ref<ViewState>('idle')
 // 明細を開いたままの「再取得」中フラグ (shimebiState は 'done' のまま → モーダル/明細を閉じない)
 const shimebiRefetching = ref(false)
+// 行単位 再取得中の row_id (その行にスピナーを出す)
+const refetchingRowIds = ref<Set<string>>(new Set())
 const shimebiMsg = ref('')
 const shimebiRows = ref<ShimebiCustomerRow[]>([])
 // 名前クリックで明細を出すため、締め日一致行の per-row 計算結果と当月軽油価格を保持。
@@ -745,6 +748,31 @@ async function onRefetchShimebiDetail() {
     shimebiMsg.value = err instanceof Error ? err.message : '再取得に失敗しました'
   } finally {
     shimebiRefetching.value = false
+  }
+}
+
+// 明細の行単位「再取得」: 範囲取得し直し、その row_id の行だけ最新値に差し替える。
+// 他行・モーダルは触らず、対象行にだけスピナーを出す。
+async function onRefetchRow(rowId: string) {
+  const date = shimebiDate.value
+  if (!rowId || !date || refetchingRowIds.value.has(rowId)) return
+  refetchingRowIds.value = new Set(refetchingRowIds.value).add(rowId)
+  shimebiMsg.value = ''
+  try {
+    const r = await fetchComputedOnDate(date)
+    if (!r.ok) {
+      shimebiMsg.value = r.errorMsg
+      return
+    }
+    const fresh = r.results.filter((x) => x.row.rowId === rowId)
+    shimebiResults.value = replaceResultsByRowId(shimebiResults.value, rowId, fresh)
+    recomputeShimebiRows()
+  } catch (err: unknown) {
+    shimebiMsg.value = err instanceof Error ? err.message : '行の再取得に失敗しました'
+  } finally {
+    const s = new Set(refetchingRowIds.value)
+    s.delete(rowId)
+    refetchingRowIds.value = s
   }
 }
 /** 当月軽油価格 (円/L) を行の売上月から引く。無ければ null */
@@ -832,10 +860,12 @@ async function onDebugIchiban() {
   URL.revokeObjectURL(a.href)
 }
 
-// 一番星から締め日分を取得 → マスタ流し込み → 計算 → skip 反映までのコア処理。
-// shimebiState / shimebiDetailCode には触れない (呼び出し側が制御する)。
+// 一番星から締め日分を取得 → マスタ流し込み → 計算し、締め日一致の per-row 結果を返す。
+// shimebiResults / skip / 集計には触れない (呼び出し側が全体適用 or 行単位差し替えを選ぶ)。
 // producer 連携の失敗は errorMsg を返し、それ以外の例外は throw する。
-async function fetchAndComputeShimebi(date: string): Promise<{ ok: true } | { ok: false; errorMsg: string }> {
+async function fetchComputedOnDate(
+  date: string,
+): Promise<{ ok: true; results: SurchargeResult[] } | { ok: false; errorMsg: string }> {
   // 一番星 from/to は売上月フィルタ。請求日(入金予定)はその後の月になり得るので、
   // 売上月を広めに取得し、client 側で「請求日 === 締め日」に絞る。
   // 対象は 請求K 0 と 1 → billing_only(=1) と transport(=0) を取得してマージ
@@ -885,9 +915,18 @@ async function fetchAndComputeShimebi(date: string): Promise<{ ok: true } | { ok
     distanceKm: parseDistanceCsv(distCsv).master.distanceKm,
   }
   const summary = computeSurcharge(mapToMeisaiRows(allRows), masters)
-  // 締め日 (請求日) が一致する行のみ集計
+  // 締め日 (請求日) が一致する行のみ
   const onDate = summary.results.filter((r) => (r.row.seikyuDate || '').slice(0, 10) === date)
-  shimebiResults.value = onDate
+  return { ok: true, results: onDate }
+}
+
+// 全体適用: 取得結果で shimebiResults を総入替し、skip を読み込んで再集計する。
+async function fetchAndComputeShimebi(
+  date: string,
+): Promise<{ ok: true } | { ok: false; errorMsg: string }> {
+  const r = await fetchComputedOnDate(date)
+  if (!r.ok) return r
+  shimebiResults.value = r.results
   // skip (計算しない) 登録を読み込み、集計から除外する
   try {
     const sk = await $fetch<{ rowIds: string[] }>('/api/surcharge-skips')
@@ -1667,9 +1706,11 @@ watch(
                 :debug-enabled="isDebugUser"
                 :can-refetch="true"
                 :refetching="shimebiRefetching"
+                :refetching-row-ids="refetchingRowIds"
                 @debug="onDebugIchiban"
                 @toggle-skip="onToggleSkip"
                 @refetch="onRefetchShimebiDetail"
+                @refetch-row="onRefetchRow"
               />
             </div>
           </div>
@@ -1692,9 +1733,11 @@ watch(
                 :debug-enabled="isDebugUser"
                 :can-refetch="true"
                 :refetching="shimebiRefetching"
+                :refetching-row-ids="refetchingRowIds"
                 @debug="onDebugIchiban"
                 @toggle-skip="onToggleSkip"
                 @refetch="onRefetchShimebiDetail"
+                @refetch-row="onRefetchRow"
               />
             </div>
           </div>
