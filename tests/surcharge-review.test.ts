@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { mapToMeisaiRows, ownershipLabel, type IchibanSurchargeRow } from '../src/surcharge-review'
+import {
+  mapToMeisaiRows,
+  ownershipLabel,
+  reconcileRow,
+  type IchibanSurchargeRow,
+} from '../src/surcharge-review'
+import type { SurchargeResult } from '../src/surcharge'
 import { computeSurcharge, type SurchargeMasters } from '../src/surcharge'
 import { toEfficiencyLookup, parseFuelEfficiencyCsv } from '../src/fuel-efficiency'
 import { toMonthlyPriceMap, parseDieselPriceCsv } from '../src/diesel-price'
@@ -45,7 +51,14 @@ describe('mapToMeisaiRows', () => {
       uriageDate: '2026-06-21',
       unchin: 65000,
       seikyuDate: '2026-07-31',
+      actualSurcharge: 0,
     })
+  })
+
+  it('fuel_surcharge (割増C=19 実額) を actualSurcharge に写像、欠落は 0', () => {
+    const rows: IchibanSurchargeRow[] = [{ ...ROWS[0]!, fuel_surcharge: 4020 }]
+    expect(mapToMeisaiRows(rows)[0]?.actualSurcharge).toBe(4020)
+    expect(mapToMeisaiRows(ROWS)[1]?.actualSurcharge).toBe(0) // 欠落 → 0
   })
 
   it('請求日 null は空文字に正規化', () => {
@@ -72,6 +85,39 @@ describe('ownershipLabel (自車/傭車)', () => {
   it('空 / undefined (producer 旧版) は —', () => {
     expect(ownershipLabel('')).toBe('—')
     expect(ownershipLabel(undefined)).toBe('—')
+  })
+})
+
+describe('reconcileRow (計算 vs 実額 割増C=19)', () => {
+  const base = mapToMeisaiRows(ROWS)[0]!
+  const mk = (
+    status: SurchargeResult['status'],
+    amount: number,
+    actual: number,
+  ): SurchargeResult => ({ row: { ...base, actualSurcharge: actual }, status, amount })
+
+  it('一致: 計算 === 実額 → diff 0 / match true', () => {
+    expect(reconcileRow(mk('ok', 4020, 4020))).toEqual({
+      computed: 4020,
+      actual: 4020,
+      diff: 0,
+      match: true,
+    })
+  })
+  it('未計上: 計算 > 実額 → diff 正 / match false', () => {
+    expect(reconcileRow(mk('ok', 5000, 4020))).toEqual({
+      computed: 5000,
+      actual: 4020,
+      diff: 980,
+      match: false,
+    })
+  })
+  it('過計上: 計算 < 実額 → diff 負', () => {
+    expect(reconcileRow(mk('ok', 3000, 4020)).diff).toBe(-1020)
+  })
+  it('status!==ok は computed 0 (warning/excluded は計算なし扱い)', () => {
+    expect(reconcileRow(mk('warning', 1000, 0)).computed).toBe(0)
+    expect(reconcileRow(mk('excluded', 1000, 0)).computed).toBe(0)
   })
 })
 

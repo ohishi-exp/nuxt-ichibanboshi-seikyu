@@ -8,6 +8,7 @@ function row(over: Partial<ShimebiCustomerRow>): ShimebiCustomerRow {
     customerName: '甲社',
     fareTotal: 10000,
     surchargeTotal: 500,
+    actualTotal: 0,
     registered: true,
     diff: 500,
     warningCount: 0,
