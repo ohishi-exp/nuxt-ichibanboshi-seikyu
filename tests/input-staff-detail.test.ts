@@ -75,19 +75,29 @@ describe('buildInputStaffRows', () => {
     expect(rows[0]?.inputStaffName).toBe('西田　和恵')
   })
 
-  it('入力者指定時はその入力担当C の明細のみ (登録/未登録問わず)', () => {
+  it('常に登録済みのみ: 入力者指定時もその入力者かつ登録済みの行だけ', () => {
     const rows = buildInputStaffRows(
       [
-        res({ tokuiC: 'A', staff: '0012', amount: 50 }),
-        res({ tokuiC: 'B', staff: '0001', amount: 80 }),
+        res({ tokuiC: 'A', staff: '0012', amount: 50 }), // 登録済み + 入力者一致
+        res({ tokuiC: 'B', staff: '0012', amount: 70 }), // 未登録 + 入力者一致 → 除外
+        res({ tokuiC: 'A', staff: '0001', amount: 80 }), // 登録済みだが入力者不一致 → 除外
       ],
-      () => false, // 全て未登録
+      (c) => c === 'A', // A だけ登録済み
       '0012',
     )
     expect(rows).toHaveLength(1)
-    expect(rows[0]?.inputStaffCode).toBe('0012')
     expect(rows[0]?.customerCode).toBe('A')
+    expect(rows[0]?.inputStaffCode).toBe('0012')
     expect(rows[0]?.computed).toBe(50)
+  })
+
+  it('未登録は入力者を指定しても出ない (全て未登録なら 0 件)', () => {
+    const rows = buildInputStaffRows(
+      [res({ tokuiC: 'A', staff: '0012', amount: 50 })],
+      () => false, // 全て未登録
+      '0012',
+    )
+    expect(rows).toHaveLength(0)
   })
 
   it('入力者なし (空) は登録済み取引先の明細のみ・全入力者', () => {
