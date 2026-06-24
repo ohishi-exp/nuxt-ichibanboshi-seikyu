@@ -477,9 +477,14 @@ async function onDieselImport() {
       latestMonth?: string
       latestPrice?: number
       sourceUrl?: string
+      weeklyWritten?: number
+      weeklyError?: string
     }>('/api/diesel-import', { method: 'POST' })
     importState.value = 'done'
-    importMsg.value = `取込完了: ${res.months} ヶ月 (最新 ${res.latestMonth} = ${res.latestPrice} 円/L)`
+    const weeklyMsg = res.weeklyError
+      ? ` / 週次保存エラー: ${res.weeklyError}`
+      : ` / 週次 ${res.weeklyWritten ?? 0} 件保存`
+    importMsg.value = `取込完了: ${res.months} ヶ月 (最新 ${res.latestMonth} = ${res.latestPrice} 円/L)${weeklyMsg}`
     await loadDieselView()
   } catch (err: unknown) {
     importState.value = 'error'
