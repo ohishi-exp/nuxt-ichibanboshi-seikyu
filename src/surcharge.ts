@@ -40,6 +40,8 @@ export interface MeisaiRow {
   itemCode?: string
   /** 品名N (表示用、計算には使わない) */
   itemName?: string
+  /** 車輌C (車番、表示用) */
+  vehicleNumber?: string
 }
 
 /**
