@@ -1182,17 +1182,20 @@ watch(
         </p>
         <table v-else-if="dieselViewState === 'done'" class="grid">
           <thead>
-            <tr><th>調査日</th><th>軽油価格 (円/L)</th></tr>
+            <tr><th>調査日</th><th>軽油価格 (円/L)</th><th>月平均 (円/L)</th></tr>
           </thead>
           <tbody>
             <template v-for="m in dieselWeeklyByMonth" :key="m.month">
-              <tr v-for="w in m.weeks" :key="w.date">
+              <tr v-for="(w, i) in m.weeks" :key="w.date" :class="{ 'month-first': i === 0 }">
                 <td>{{ w.date }}</td>
                 <td class="num">{{ w.price }}</td>
-              </tr>
-              <tr class="weekly-avg">
-                <td>{{ m.month }} 月平均</td>
-                <td class="num">{{ m.avg }}</td>
+                <td
+                  v-if="i === 0"
+                  :rowspan="m.weeks.length"
+                  class="num weekly-avg-col"
+                >
+                  {{ m.avg }}
+                </td>
               </tr>
             </template>
           </tbody>
@@ -1887,10 +1890,14 @@ nav {
   margin-bottom: 0.75rem;
 }
 /* 週次内訳セル: 調査日:価格 を折り返しチップ表示 */
-.weekly-avg td {
+.weekly-avg-col {
   background: #eff6ff;
   font-weight: 600;
-  border-top: 1px solid #bfdbfe;
+  vertical-align: middle;
+  border-left: 1px solid #bfdbfe;
+}
+.month-first td {
+  border-top: 2px solid #d1d5db;
 }
 .weekly-cell {
   display: inline-block;
