@@ -371,6 +371,18 @@ const dieselWeeklyByMonth = computed(() => {
     .sort((a, b) => b.month.localeCompare(a.month))
 })
 
+// 月 -> 週次内訳 の索引 (現在の登録内容テーブルの行展開で検算表示する)。
+const dieselWeeklyMap = computed(() => {
+  const m = new Map<string, { weeks: { date: string; price: number }[]; avg: number }>()
+  for (const g of dieselWeeklyByMonth.value) m.set(g.month, { weeks: g.weeks, avg: g.avg })
+  return m
+})
+// 現在の登録内容テーブルで週次内訳 (検算) を展開している月。
+const openDieselMonths = ref<Record<string, boolean>>({})
+function toggleDieselMonth(month: string) {
+  openDieselMonths.value = { ...openDieselMonths.value, [month]: !openDieselMonths.value[month] }
+}
+
 async function loadDieselView() {
   dieselViewState.value = 'loading'
   dieselViewMsg.value = ''
@@ -1150,56 +1162,73 @@ watch(
         <p v-if="dieselRowState === 'error'" class="status err">{{ dieselRowMsg }}</p>
 
         <h3 class="view-title">現在の登録内容</h3>
-        <p class="lead-note">軽油価格は直接編集して「保存」で更新できます (年月はキーのため変更不可)。</p>
+        <p class="lead-note">
+          軽油価格は直接編集して「保存」で更新できます (年月はキーのため変更不可)。<br />
+          各月の <strong>▶</strong> で週次内訳 (検算) を展開し、月平均が登録値と一致するか確認できます
+          (週次は「経産省から取込」/ cron 実行時に保存。未取込月は ▶ が出ません)。
+        </p>
         <p v-if="dieselViewState === 'loading'" class="status">読込中…</p>
         <p v-else-if="dieselViewState === 'error'" class="status err">{{ dieselViewMsg }}</p>
         <p v-else-if="dieselViewMsg" class="status">{{ dieselViewMsg }}</p>
         <table v-if="dieselViewState === 'done' && dieselEntries.length" class="grid">
           <thead>
-            <tr><th>年月</th><th>軽油価格 (円/L)</th><th></th></tr>
+            <tr><th></th><th>年月</th><th>軽油価格 (円/L)</th><th></th></tr>
           </thead>
           <tbody>
-            <tr v-for="e in dieselEntries" :key="e.month">
-              <td>{{ e.month }}</td>
-              <td>
-                <input v-model.number="e.price" type="number" step="0.1" min="0" class="cell-edit num" />
-              </td>
-              <td class="row-ops">
-                <button class="link-save" :disabled="dieselRowState === 'saving'" @click="onSaveDiesel(e)">保存</button>
-                <button class="link-del" @click="onDeleteDiesel(e.month)">削除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <h3 class="view-title">週次内訳 (検算)</h3>
-        <p class="lead-note">
-          月次平均の根拠となる週次 全国平均です。各月の「月平均」が上の登録値と一致するか確認できます。
-          週次は「経産省から取込」/ cron 実行時に保存されます (手入力月・未取込月は表示されません)。
-        </p>
-        <p v-if="dieselViewState === 'done' && dieselWeeklyByMonth.length === 0" class="lead-note">
-          週次データなし — 「詳細 / 開発者向け」→「経産省から取込」で直近 24 ヶ月の週次が保存されます。
-        </p>
-        <table v-else-if="dieselViewState === 'done'" class="grid">
-          <thead>
-            <tr><th>調査日</th><th>軽油価格 (円/L)</th><th>月平均 (円/L)</th></tr>
-          </thead>
-          <tbody>
-            <template v-for="m in dieselWeeklyByMonth" :key="m.month">
-              <tr v-for="(w, i) in m.weeks" :key="w.date" :class="{ 'month-first': i === 0 }">
-                <td>{{ w.date }}</td>
-                <td class="num">{{ w.price }}</td>
-                <td
-                  v-if="i === 0"
-                  :rowspan="m.weeks.length"
-                  class="num weekly-avg-col"
-                >
-                  {{ m.avg }}
+            <template v-for="e in dieselEntries" :key="e.month">
+              <tr>
+                <td class="expand-col">
+                  <button
+                    v-if="dieselWeeklyMap.get(e.month)"
+                    class="link-expand"
+                    :title="openDieselMonths[e.month] ? '週次内訳を閉じる' : '週次内訳 (検算) を開く'"
+                    @click="toggleDieselMonth(e.month)"
+                  >
+                    {{ openDieselMonths[e.month] ? '▼' : '▶' }}
+                  </button>
+                </td>
+                <td>{{ e.month }}</td>
+                <td>
+                  <input v-model.number="e.price" type="number" step="0.1" min="0" class="cell-edit num" />
+                </td>
+                <td class="row-ops">
+                  <button class="link-save" :disabled="dieselRowState === 'saving'" @click="onSaveDiesel(e)">保存</button>
+                  <button class="link-del" @click="onDeleteDiesel(e.month)">削除</button>
+                </td>
+              </tr>
+              <tr v-if="openDieselMonths[e.month] && dieselWeeklyMap.get(e.month)" class="weekly-detail-row">
+                <td></td>
+                <td colspan="3">
+                  <table class="weekly-inline">
+                    <thead>
+                      <tr><th>調査日</th><th>軽油価格 (円/L)</th><th>月平均 (円/L)</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(w, i) in dieselWeeklyMap.get(e.month)!.weeks" :key="w.date">
+                        <td>{{ w.date }}</td>
+                        <td class="num">{{ w.price }}</td>
+                        <td
+                          v-if="i === 0"
+                          :rowspan="dieselWeeklyMap.get(e.month)!.weeks.length"
+                          class="num weekly-avg-col"
+                        >
+                          {{ dieselWeeklyMap.get(e.month)!.avg }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </td>
               </tr>
             </template>
           </tbody>
         </table>
+
+        <p
+          v-if="dieselViewState === 'done' && dieselEntries.length && dieselWeeklyByMonth.length === 0"
+          class="lead-note"
+        >
+          週次内訳なし — 「詳細 / 開発者向け」→「経産省から取込」で直近 24 ヶ月の週次が保存され、▶ で展開できます。
+        </p>
       </section>
 
       <!-- サーチャージマスタ (サーチャージ対象として登録する取引先) -->
@@ -1898,6 +1927,36 @@ nav {
 }
 .month-first td {
   border-top: 2px solid #d1d5db;
+}
+.expand-col {
+  width: 1.5rem;
+  text-align: center;
+}
+.link-expand {
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0 0.25rem;
+}
+.weekly-detail-row > td {
+  background: #f9fafb;
+  padding: 0.25rem 0.5rem 0.75rem;
+}
+.weekly-inline {
+  width: auto;
+  border-collapse: collapse;
+  margin: 0.25rem 0 0;
+}
+.weekly-inline th,
+.weekly-inline td {
+  border: 1px solid #e5e7eb;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.85rem;
+}
+.weekly-inline thead th {
+  background: #f3f4f6;
 }
 .weekly-cell {
   display: inline-block;
