@@ -50,6 +50,12 @@ export interface MeisaiRow {
    * 「計算 vs 実額」の行照合 (reconcileRow) で参照する。producer 旧版欠落時は 0。
    */
   actualSurcharge?: number
+  /**
+   * 行 ID = `管理年月日`+`管理C` (producer rust-ichibanboshi#27 の row_id)。
+   * 運転日報明細 1 行の安定キー。「計算しない (skip) 行」の永続化キーに使う。
+   * producer 旧版欠落時は undefined (= skip 不可)。
+   */
+  rowId?: string
 }
 
 /**

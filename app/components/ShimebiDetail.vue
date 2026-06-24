@@ -4,20 +4,30 @@
 import type { SurchargeResult } from '../../src/surcharge'
 import { ownershipLabel, reconcileRow } from '../../src/surcharge-review'
 
-const props = defineProps<{
-  code: string
-  name: string
-  date: string
-  rows: SurchargeResult[]
-  /** "YYYY-MM" -> 当月軽油価格 (円/L) */
-  dieselMap: Record<string, number>
-  /** m.tama.ramu のみ true。一番星 生データ取得 (debug) ボタンの出し分け */
-  debugEnabled?: boolean
-}>()
-const emit = defineEmits<{ debug: [] }>()
+const props = withDefaults(
+  defineProps<{
+    code: string
+    name: string
+    date: string
+    rows: SurchargeResult[]
+    /** "YYYY-MM" -> 当月軽油価格 (円/L) */
+    dieselMap: Record<string, number>
+    /** skip (計算しない) 登録済みの行 ID 集合 */
+    skippedRowIds?: Set<string>
+    /** m.tama.ramu のみ true。一番星 生データ取得 (debug) ボタンの出し分け */
+    debugEnabled?: boolean
+  }>(),
+  { skippedRowIds: () => new Set<string>() },
+)
+const emit = defineEmits<{ debug: []; toggleSkip: [rowId: string] }>()
 
 function dieselPriceForRow(uriageDate: string): number | null {
   return props.dieselMap[uriageDate.slice(0, 7)] ?? null
+}
+
+/** 行が skip 登録済みか (row_id 欠落行は skip 不可) */
+function isSkipped(rowId?: string): boolean {
+  return !!rowId && props.skippedRowIds.has(rowId)
 }
 </script>
 
@@ -40,17 +50,28 @@ function dieselPriceForRow(uriageDate: string): number | null {
       (基準価格以下は 0)。未計上は距離/当月価格の欠落が理由です。
       <strong>実額</strong>は一番星の割増 (割増C=19 燃料ｻｰﾁｬｰｼﾞ) で、各行で計算と実額を照合します
       (差額 = 計算 − 実額、正=未計上 / 負=過計上 / 0=一致)。
+      <strong>計算しない</strong>にチェックした行は集計から除外され、行 ID (管理年月日+管理C) で保存されます。
     </p>
     <table class="grid">
       <thead>
         <tr>
+          <th>計算しない</th>
           <th>売上日</th><th>区分</th><th>積地</th><th>卸地</th><th>車種</th><th>車番</th><th>品名</th><th>運賃</th>
           <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
           <th>燃費 (km/L)</th><th>計算 (円)</th><th>実額 (円)</th><th>差額 (円)</th><th>照合</th><th>状態</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(d, i) in rows" :key="i">
+        <tr v-for="(d, i) in rows" :key="i" :class="{ 'row-skipped': isSkipped(d.row.rowId) }">
+          <td class="skip-col">
+            <input
+              type="checkbox"
+              :checked="isSkipped(d.row.rowId)"
+              :disabled="!d.row.rowId"
+              :title="d.row.rowId ? '計算対象から外す (保存)' : '行 ID 未取得のため skip 不可 (producer 要更新)'"
+              @change="d.row.rowId && emit('toggleSkip', d.row.rowId)"
+            />
+          </td>
           <td>{{ d.row.uriageDate }}</td>
           <td>{{ ownershipLabel(d.row.subcontractorCode) }}</td>
           <td>{{ d.row.fromPref }}</td>
@@ -138,6 +159,14 @@ function dieselPriceForRow(uriageDate: string): number | null {
 .diff-nz {
   color: #b45309;
   font-weight: 600;
+}
+.skip-col {
+  text-align: center;
+}
+.row-skipped {
+  opacity: 0.5;
+  text-decoration: line-through;
+  background: #f9fafb;
 }
 .warn-note {
   font-size: 0.78rem;

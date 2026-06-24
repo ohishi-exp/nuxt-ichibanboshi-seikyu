@@ -28,6 +28,8 @@ export interface IchibanSurchargeRow {
   vehicle_number?: string
   /** 実額サーチャージ (割増C='19' = 燃料ｻｰﾁｬｰｼﾞ)。producer (#26) 以降で返る。旧版は欠落 */
   fuel_surcharge?: number
+  /** 行 ID = 管理年月日+管理C。producer (#27) 以降で返る。skip 永続化キー。旧版は欠落 */
+  row_id?: string
 }
 
 /** 一番星 SurchargeRow[] → MeisaiRow[] (純粋)。請求日 null は空文字 (= 集計キーで空扱い) */
@@ -47,6 +49,7 @@ export function mapToMeisaiRows(rows: IchibanSurchargeRow[]): MeisaiRow[] {
     vehicleNumber: r.vehicle_number,
     vehicleName: r.vehicle_name,
     actualSurcharge: r.fuel_surcharge ?? 0,
+    rowId: r.row_id,
   }))
 }
 
