@@ -6,8 +6,16 @@ import { computeSurcharge, type SurchargeMasters, type SurchargeResult } from '.
 import {
   mapToMeisaiRows,
   isAdjustmentRow,
+  reconcileRow,
+  ownershipLabel,
   type IchibanSurchargeRow,
 } from '../../src/surcharge-review'
+import {
+  buildInputStaffRows,
+  buildInputStaffCsv,
+  listInputStaffCodes,
+  type InputStaffRow,
+} from '../../src/input-staff-detail'
 import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
 import { replaceResultsByRowId } from '../../src/shimebi-merge'
 import { SHIMEBI_DETAIL_PAYLOAD_KEY } from '../../src/shimebi-detail-key'
@@ -33,10 +41,12 @@ type Section =
   | 'surchargeCustomers'
   | 'notification'
   | 'shimebi'
+  | 'inputStaff'
   | 'settings'
 const active = ref<Section>('shimebi')
 const nav: { key: Section; label: string; group: string }[] = [
   { key: 'shimebi', label: '締め日別 取引先', group: '確認' },
+  { key: 'inputStaff', label: '入力者別 明細', group: '確認' },
   { key: 'distance', label: '県庁間距離マスタ', group: '設定' },
   { key: 'fuel', label: '燃費マスタ', group: '設定' },
   { key: 'diesel', label: '軽油価格マスタ', group: '設定' },
@@ -45,12 +55,13 @@ const nav: { key: Section; label: string; group: string }[] = [
   { key: 'settings', label: 'DB スキーマ初期化', group: '設定' },
 ]
 // 設定グループ (距離/燃費/軽油/サーチャージ/届出/DB初期化) を 2 段目タブにする。
-const settingsNav = nav.filter((n) => n.key !== 'shimebi')
-const isSettings = computed(() => active.value !== 'shimebi')
+// 確認グループ (締め日別 / 入力者別) は左 nav の独立ボタンなので除外する。
+const settingsNav = nav.filter((n) => n.group !== '確認')
+const isSettings = computed(() => active.value !== 'shimebi' && active.value !== 'inputStaff')
 // 設定内で最後に開いていたサブタブ。「設定」を押した時にここへ戻す。
 const lastSettingsSub = ref<Section>('distance')
 watch(active, (v) => {
-  if (v !== 'shimebi') lastSettingsSub.value = v
+  if (v !== 'shimebi' && v !== 'inputStaff') lastSettingsSub.value = v
 })
 function openSettings() {
   if (active.value === 'shimebi') active.value = lastSettingsSub.value
@@ -1059,6 +1070,115 @@ function onExportShimebiCsv() {
   URL.revokeObjectURL(url)
 }
 
+// --- 入力者別 明細 (締め日別とは別タブ。締め日に非連動、直近 1 ヶ月 = 前月 固定)。 ---
+// 売上年月 = 前月 (例: 6 月中は 5 月) を 1 ヶ月分だけ取得し、運転日報明細 1 行 = 1 行で並べる。
+// 入力者を選ぶとその入力者の明細のみ / 選ばないと登録済み (サーチャージ対象) 取引先の明細のみ。
+const isState = ref<ViewState>('idle')
+const isMsg = ref('')
+// 前月分の全 per-row 計算結果 (フィルタ前)。ドロップダウン・明細・CSV の元データ。
+const isAllResults = ref<SurchargeResult[]>([])
+// 入力者 (入力担当C) 選択。空 ('') = 登録済みのみ全員表示。
+const isSelectedStaff = ref('')
+// 取得対象の売上年月 (前月、表示用)。
+const isTargetMonth = ref('')
+
+const isStaffOptions = computed(() => listInputStaffCodes(isAllResults.value))
+const isRows = computed<InputStaffRow[]>(() =>
+  buildInputStaffRows(
+    isAllResults.value,
+    (code) => registeredCodes.value.has(code),
+    isSelectedStaff.value,
+  ),
+)
+
+// 一番星から売上年月 [from, to] (両端含む) の請求K 0/1 を取得し、マスタ流し込み → 全行計算する。
+// 締め日 (請求日) では絞らない (= 入力者別タブ用)。失敗は errorMsg を返す。
+async function fetchComputedRange(
+  from: string,
+  to: string,
+): Promise<{ ok: true; results: SurchargeResult[] } | { ok: false; errorMsg: string }> {
+  const [billing, transport] = await Promise.all([
+    $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
+      '/api/surcharge-base',
+      { query: { from, to, kind: 'billing_only', limit: 10000 } },
+    ),
+    $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
+      '/api/surcharge-base',
+      { query: { from, to, kind: 'transport', limit: 10000 } },
+    ),
+  ])
+  const failed = billing.reason ? billing : transport.reason ? transport : null
+  if (failed) {
+    return {
+      ok: false,
+      errorMsg:
+        failed.reason === 'upstream'
+          ? `一番星が ${failed.upstreamStatus} を返しました`
+          : failed.reason === 'connect_failed'
+            ? '一番星への接続に失敗しました'
+            : '一番星連携が未設定です',
+    }
+  }
+  const allRows = [...billing.rows, ...transport.rows].filter((r) => !isAdjustmentRow(r))
+  const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
+    $fetch<string>('/api/distance', { responseType: 'text' }),
+    $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
+    $fetch<string>('/api/diesel-price', { responseType: 'text' }),
+    $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings'),
+  ])
+  await loadSurchargeCustomers()
+  const dieselMap = toMonthlyPriceMap(parseDieselPriceCsv(dieselCsv).entries)
+  const masters: SurchargeMasters = {
+    basePrice: settings.basePrice,
+    priceStep: settings.priceStep,
+    monthlyDieselPrice: dieselMap,
+    fuelEfficiency: toEfficiencyLookup(parseFuelEfficiencyCsv(fuelCsv).entries),
+    distanceKm: parseDistanceCsv(distCsv).master.distanceKm,
+  }
+  const summary = computeSurcharge(mapToMeisaiRows(allRows), masters)
+  return { ok: true, results: summary.results }
+}
+
+async function onRunInputStaff() {
+  const now = new Date()
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const target = shiftMonth(ym, -1) // 前月 (6 月中は 5 月)
+  isTargetMonth.value = target
+  isState.value = 'loading'
+  isMsg.value = ''
+  isAllResults.value = []
+  isSelectedStaff.value = '' // 既定は「登録済みのみ」
+  try {
+    const r = await fetchComputedRange(target, target)
+    if (!r.ok) {
+      isState.value = 'error'
+      isMsg.value = r.errorMsg
+      return
+    }
+    isAllResults.value = r.results
+    isState.value = 'done'
+    if (isStaffOptions.value.length === 0) {
+      isMsg.value =
+        '入力担当C が取得できませんでした (一番星 producer 未反映の可能性があります)。登録済み取引先の明細のみ表示しています'
+    }
+  } catch (err: unknown) {
+    isState.value = 'error'
+    isMsg.value = err instanceof Error ? err.message : '取得に失敗しました'
+  }
+}
+
+function onExportInputStaffCsv() {
+  if (!import.meta.client || isRows.value.length === 0) return
+  const csv = buildInputStaffCsv(isRows.value)
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `input-staff_${isTargetMonth.value || 'export'}_${isSelectedStaff.value || 'all'}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // セクションを開いた時に未読込なら現在の登録内容を自動表示する。
 watch(
   active,
@@ -1071,6 +1191,7 @@ watch(
     if (sec === 'diesel' && dieselViewState.value === 'idle') void loadDieselView()
     if (sec === 'surchargeCustomers' && scState.value === 'idle') void loadSurchargeCustomers()
     if (sec === 'shimebi' && scState.value === 'idle') void loadSurchargeCustomers()
+    if (sec === 'inputStaff' && scState.value === 'idle') void loadSurchargeCustomers()
     // 届出書も燃費マスタ現在値を載せるため fuel を読む + サーチャージ設定を読む
     if (sec === 'notification') {
       if (fuelViewState.value === 'idle') void loadFuelView()
@@ -1097,6 +1218,13 @@ watch(
           @click="active = 'shimebi'"
         >
           締め日別 取引先
+        </button>
+        <button
+          class="nav-item"
+          :class="{ active: active === 'inputStaff' }"
+          @click="active = 'inputStaff'"
+        >
+          入力者別 明細
         </button>
         <button
           class="nav-item"
@@ -1779,6 +1907,80 @@ watch(
               />
             </div>
           </div>
+        </template>
+      </section>
+
+      <!-- 入力者別 明細 (締め日別とは別タブ。締め日に非連動・前月固定・明細単位) -->
+      <section v-else-if="active === 'inputStaff'" class="card">
+        <h2>入力者別 明細</h2>
+        <p class="lead-note">
+          一番星の<strong>前月分 (売上年月)</strong> の運転日報明細を、<strong>1 行 = 1 明細</strong>で一覧します
+          (締め日 / 請求日には連動しません)。<strong>入力者</strong>を選ぶとその入力者 (入力担当C) の明細だけに、
+          <strong>未選択</strong>のときは<strong>サーチャージ対象に登録済みの取引先</strong>の明細だけに絞ります。
+          一覧と同じ内容を CSV 出力できます。
+        </p>
+        <div class="actions">
+          <button class="btn" :disabled="isState === 'loading'" @click="onRunInputStaff">
+            表示 (前月分を取得)
+          </button>
+          <span v-if="isTargetMonth" class="lead-note">対象売上年月: {{ isTargetMonth }}</span>
+          <label class="inline-label">
+            入力者
+            <select v-model="isSelectedStaff" :disabled="isState !== 'done'">
+              <option value="">指定なし (登録済みのみ)</option>
+              <option v-for="code in isStaffOptions" :key="code" :value="code">
+                {{ code }}
+              </option>
+            </select>
+          </label>
+        </div>
+        <p v-if="isState === 'loading'" class="status">取得中…</p>
+        <p v-else-if="isState === 'error'" class="status err">{{ isMsg }}</p>
+        <template v-if="isState === 'done'">
+          <p v-if="isMsg" class="status">{{ isMsg }}</p>
+          <div v-if="isRows.length" class="actions">
+            <button class="btn" @click="onExportInputStaffCsv">CSV 出力</button>
+            <span class="lead-note">{{ isRows.length }} 件・UTF-8 BOM</span>
+          </div>
+          <table v-if="isRows.length" class="grid">
+            <thead>
+              <tr>
+                <th>入力者</th>
+                <th>売上年月日</th>
+                <th>取引先</th>
+                <th>車番</th>
+                <th>積地→卸地</th>
+                <th>区分</th>
+                <th>運賃</th>
+                <th>計算SC</th>
+                <th>実額(C19)</th>
+                <th>差額</th>
+                <th>登録</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(r, i) in isRows" :key="`${r.inputStaffCode}-${r.customerCode}-${r.saleDate}-${i}`">
+                <td>{{ r.inputStaffCode || '—' }}</td>
+                <td>{{ r.saleDate }}</td>
+                <td>{{ r.customerCode }} {{ r.customerName }}</td>
+                <td>{{ r.vehicleNumber }}</td>
+                <td>{{ r.fromPref }}→{{ r.toPref }}</td>
+                <td>{{ r.ownership }}</td>
+                <td class="num">{{ r.fare.toLocaleString() }}</td>
+                <td class="num">{{ r.computed.toLocaleString() }}</td>
+                <td class="num">{{ r.actual.toLocaleString() }}</td>
+                <td class="num" :class="r.diff === 0 ? '' : 'diff-nz'">{{ r.diff.toLocaleString() }}</td>
+                <td>
+                  <span :class="r.registered ? 'badge-on' : 'badge-off'">
+                    {{ r.registered ? '登録済' : '未登録' }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="status">
+            {{ isSelectedStaff ? `入力者 ${isSelectedStaff} の前月明細がありません` : '前月に登録済み取引先の明細がありません' }}
+          </p>
         </template>
       </section>
 
