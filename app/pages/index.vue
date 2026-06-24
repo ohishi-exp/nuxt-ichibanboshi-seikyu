@@ -3,7 +3,11 @@ import { parseDistanceCsv, distanceKey, type DistanceMaster } from '../../src/di
 import { parseFuelEfficiencyCsv, toEfficiencyLookup, type FuelEfficiencyEntry } from '../../src/fuel-efficiency'
 import { parseDieselPriceCsv, toMonthlyPriceMap, type DieselPriceEntry } from '../../src/diesel-price'
 import { computeSurcharge, type SurchargeMasters, type SurchargeResult } from '../../src/surcharge'
-import { mapToMeisaiRows, type IchibanSurchargeRow } from '../../src/surcharge-review'
+import {
+  mapToMeisaiRows,
+  isAdjustmentRow,
+  type IchibanSurchargeRow,
+} from '../../src/surcharge-review'
 import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
 import { SHIMEBI_DETAIL_PAYLOAD_KEY } from '../../src/shimebi-detail-key'
 import { buildShimebiCsv } from '../../src/shimebi-csv'
@@ -816,7 +820,9 @@ async function onRunShimebi() {
             : '一番星連携が未設定です'
       return
     }
-    const allRows = [...billing.rows, ...transport.rows]
+    // 一括調整明細 (※請求一括調整明細※ 等) は運送実体が無い調整行なので明細・集計から除外。
+    // 燃料油価格変動調整金 / 燃料調整金 (実サーチャージ請求) は除外しない (isAdjustmentRow 参照)。
+    const allRows = [...billing.rows, ...transport.rows].filter((r) => !isAdjustmentRow(r))
     const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
       $fetch<string>('/api/distance', { responseType: 'text' }),
       $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
