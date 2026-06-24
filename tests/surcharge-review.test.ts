@@ -41,6 +41,7 @@ describe('mapToMeisaiRows', () => {
       fromPref: '長崎県',
       toPref: '福岡県',
       sharuC: '04',
+      vehicleName: '大型幌',
       uriageDate: '2026-06-21',
       unchin: 65000,
       seikyuDate: '2026-07-31',

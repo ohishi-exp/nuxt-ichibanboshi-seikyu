@@ -53,7 +53,7 @@ function dieselPriceForRow(uriageDate: string): number | null {
           <td>{{ ownershipLabel(d.row.subcontractorCode) }}</td>
           <td>{{ d.row.fromPref }}</td>
           <td>{{ d.row.toPref }}</td>
-          <td>{{ d.row.sharuC }}</td>
+          <td>{{ d.row.vehicleName || d.row.sharuC }}</td>
           <td>{{ d.row.vehicleNumber || '—' }}</td>
           <td>{{ d.row.itemName || '—' }}</td>
           <td class="num">{{ d.row.unchin.toLocaleString() }}</td>

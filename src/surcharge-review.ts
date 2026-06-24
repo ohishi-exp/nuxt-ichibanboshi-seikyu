@@ -43,6 +43,7 @@ export function mapToMeisaiRows(rows: IchibanSurchargeRow[]): MeisaiRow[] {
     itemCode: r.item_code,
     itemName: r.item_name,
     vehicleNumber: r.vehicle_number,
+    vehicleName: r.vehicle_name,
   }))
 }
 
