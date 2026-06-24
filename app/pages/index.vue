@@ -664,6 +664,8 @@ function shiftMonth(ym: string, delta: number): string {
 }
 const shimebiDate = ref('') // YYYY-MM-DD (締め日 = 請求日)
 const shimebiState = ref<ViewState>('idle')
+// 明細を開いたままの「再取得」中フラグ (shimebiState は 'done' のまま → モーダル/明細を閉じない)
+const shimebiRefetching = ref(false)
 const shimebiMsg = ref('')
 const shimebiRows = ref<ShimebiCustomerRow[]>([])
 // 名前クリックで明細を出すため、締め日一致行の per-row 計算結果と当月軽油価格を保持。
@@ -728,11 +730,22 @@ function onShowShimebiDetail(code: string) {
   shimebiDetailCode.value = shimebiDetailCode.value === code ? null : code
 }
 
-// 明細ヘッダの「再取得」: 現在の締め日を一番星から再取得し、開いている明細は維持する。
+// 明細ヘッダの「再取得」: モーダル/明細を閉じずに (shimebiState は 'done' のまま) データだけ
+// 再取得して差し替える。再取得中は shimebiRefetching=true で明細上にローディングを出す。
 async function onRefetchShimebiDetail() {
-  const keep = shimebiDetailCode.value
-  await onRunShimebi()
-  if (keep) shimebiDetailCode.value = keep
+  const date = shimebiDate.value
+  if (!date || shimebiRefetching.value) return
+  shimebiRefetching.value = true
+  shimebiMsg.value = ''
+  try {
+    const r = await fetchAndComputeShimebi(date)
+    // 明細 (shimebiDetailCode) は維持。shimebiResults 更新で明細は自動再描画される。
+    if (!r.ok) shimebiMsg.value = r.errorMsg
+  } catch (err: unknown) {
+    shimebiMsg.value = err instanceof Error ? err.message : '再取得に失敗しました'
+  } finally {
+    shimebiRefetching.value = false
+  }
 }
 /** 当月軽油価格 (円/L) を行の売上月から引く。無ければ null */
 function dieselPriceForRow(uriageDate: string): number | null {
@@ -819,6 +832,73 @@ async function onDebugIchiban() {
   URL.revokeObjectURL(a.href)
 }
 
+// 一番星から締め日分を取得 → マスタ流し込み → 計算 → skip 反映までのコア処理。
+// shimebiState / shimebiDetailCode には触れない (呼び出し側が制御する)。
+// producer 連携の失敗は errorMsg を返し、それ以外の例外は throw する。
+async function fetchAndComputeShimebi(date: string): Promise<{ ok: true } | { ok: false; errorMsg: string }> {
+  // 一番星 from/to は売上月フィルタ。請求日(入金予定)はその後の月になり得るので、
+  // 売上月を広めに取得し、client 側で「請求日 === 締め日」に絞る。
+  // 対象は 請求K 0 と 1 → billing_only(=1) と transport(=0) を取得してマージ
+  // (kind=all は請求K=2 等も含み limit 切れの恐れがあるため使わない)。
+  const ym = date.slice(0, 7)
+  const from = shiftMonth(ym, -2)
+  const to = shiftMonth(ym, 1)
+  const [billing, transport] = await Promise.all([
+    $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
+      '/api/surcharge-base',
+      { query: { from, to, kind: 'billing_only', limit: 10000 } },
+    ),
+    $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
+      '/api/surcharge-base',
+      { query: { from, to, kind: 'transport', limit: 10000 } },
+    ),
+  ])
+  const failed = billing.reason ? billing : transport.reason ? transport : null
+  if (failed) {
+    return {
+      ok: false,
+      errorMsg:
+        failed.reason === 'upstream'
+          ? `一番星が ${failed.upstreamStatus} を返しました`
+          : failed.reason === 'connect_failed'
+            ? '一番星への接続に失敗しました'
+            : '一番星連携が未設定です',
+    }
+  }
+  // 一括調整明細 (※請求一括調整明細※ 等) は運送実体が無い調整行なので明細・集計から除外。
+  // 燃料油価格変動調整金 / 燃料調整金 (実サーチャージ請求) は除外しない (isAdjustmentRow 参照)。
+  const allRows = [...billing.rows, ...transport.rows].filter((r) => !isAdjustmentRow(r))
+  const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
+    $fetch<string>('/api/distance', { responseType: 'text' }),
+    $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
+    $fetch<string>('/api/diesel-price', { responseType: 'text' }),
+    $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings'),
+  ])
+  await loadSurchargeCustomers()
+  const dieselMap = toMonthlyPriceMap(parseDieselPriceCsv(dieselCsv).entries)
+  shimebiDieselMap.value = dieselMap
+  const masters: SurchargeMasters = {
+    basePrice: settings.basePrice,
+    priceStep: settings.priceStep,
+    monthlyDieselPrice: dieselMap,
+    fuelEfficiency: toEfficiencyLookup(parseFuelEfficiencyCsv(fuelCsv).entries),
+    distanceKm: parseDistanceCsv(distCsv).master.distanceKm,
+  }
+  const summary = computeSurcharge(mapToMeisaiRows(allRows), masters)
+  // 締め日 (請求日) が一致する行のみ集計
+  const onDate = summary.results.filter((r) => (r.row.seikyuDate || '').slice(0, 10) === date)
+  shimebiResults.value = onDate
+  // skip (計算しない) 登録を読み込み、集計から除外する
+  try {
+    const sk = await $fetch<{ rowIds: string[] }>('/api/surcharge-skips')
+    skippedRowIds.value = new Set(sk.rowIds)
+  } catch {
+    skippedRowIds.value = new Set()
+  }
+  recomputeShimebiRows()
+  return { ok: true }
+}
+
 async function onRunShimebi() {
   const date = shimebiDate.value
   if (!date) {
@@ -831,65 +911,12 @@ async function onRunShimebi() {
   shimebiRows.value = []
   shimebiDetailCode.value = null
   try {
-    // 一番星 from/to は売上月フィルタ。請求日(入金予定)はその後の月になり得るので、
-    // 売上月を広めに取得し、client 側で「請求日 === 締め日」に絞る。
-    // 対象は 請求K 0 と 1 → billing_only(=1) と transport(=0) を取得してマージ
-    // (kind=all は請求K=2 等も含み limit 切れの恐れがあるため使わない)。
-    const ym = date.slice(0, 7)
-    const from = shiftMonth(ym, -2)
-    const to = shiftMonth(ym, 1)
-    const [billing, transport] = await Promise.all([
-      $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
-        '/api/surcharge-base',
-        { query: { from, to, kind: 'billing_only', limit: 10000 } },
-      ),
-      $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
-        '/api/surcharge-base',
-        { query: { from, to, kind: 'transport', limit: 10000 } },
-      ),
-    ])
-    const failed = billing.reason ? billing : transport.reason ? transport : null
-    if (failed) {
+    const r = await fetchAndComputeShimebi(date)
+    if (!r.ok) {
       shimebiState.value = 'error'
-      shimebiMsg.value =
-        failed.reason === 'upstream'
-          ? `一番星が ${failed.upstreamStatus} を返しました`
-          : failed.reason === 'connect_failed'
-            ? '一番星への接続に失敗しました'
-            : '一番星連携が未設定です'
+      shimebiMsg.value = r.errorMsg
       return
     }
-    // 一括調整明細 (※請求一括調整明細※ 等) は運送実体が無い調整行なので明細・集計から除外。
-    // 燃料油価格変動調整金 / 燃料調整金 (実サーチャージ請求) は除外しない (isAdjustmentRow 参照)。
-    const allRows = [...billing.rows, ...transport.rows].filter((r) => !isAdjustmentRow(r))
-    const [distCsv, fuelCsv, dieselCsv, settings] = await Promise.all([
-      $fetch<string>('/api/distance', { responseType: 'text' }),
-      $fetch<string>('/api/fuel-efficiency', { responseType: 'text' }),
-      $fetch<string>('/api/diesel-price', { responseType: 'text' }),
-      $fetch<{ basePrice: number; priceStep: number }>('/api/surcharge-settings'),
-    ])
-    await loadSurchargeCustomers()
-    const dieselMap = toMonthlyPriceMap(parseDieselPriceCsv(dieselCsv).entries)
-    shimebiDieselMap.value = dieselMap
-    const masters: SurchargeMasters = {
-      basePrice: settings.basePrice,
-      priceStep: settings.priceStep,
-      monthlyDieselPrice: dieselMap,
-      fuelEfficiency: toEfficiencyLookup(parseFuelEfficiencyCsv(fuelCsv).entries),
-      distanceKm: parseDistanceCsv(distCsv).master.distanceKm,
-    }
-    const summary = computeSurcharge(mapToMeisaiRows(allRows), masters)
-    // 締め日 (請求日) が一致する行のみ集計
-    const onDate = summary.results.filter((r) => (r.row.seikyuDate || '').slice(0, 10) === date)
-    shimebiResults.value = onDate
-    // skip (計算しない) 登録を読み込み、集計から除外する
-    try {
-      const sk = await $fetch<{ rowIds: string[] }>('/api/surcharge-skips')
-      skippedRowIds.value = new Set(sk.rowIds)
-    } catch {
-      skippedRowIds.value = new Set()
-    }
-    recomputeShimebiRows()
     shimebiState.value = 'done'
     if (shimebiRows.value.length === 0) {
       shimebiMsg.value = 'この締め日 (請求日) に請求のある取引先がありません'
@@ -1639,6 +1666,7 @@ watch(
                 :skipped-row-ids="skippedRowIds"
                 :debug-enabled="isDebugUser"
                 :can-refetch="true"
+                :refetching="shimebiRefetching"
                 @debug="onDebugIchiban"
                 @toggle-skip="onToggleSkip"
                 @refetch="onRefetchShimebiDetail"
@@ -1663,6 +1691,7 @@ watch(
                 :skipped-row-ids="skippedRowIds"
                 :debug-enabled="isDebugUser"
                 :can-refetch="true"
+                :refetching="shimebiRefetching"
                 @debug="onDebugIchiban"
                 @toggle-skip="onToggleSkip"
                 @refetch="onRefetchShimebiDetail"
