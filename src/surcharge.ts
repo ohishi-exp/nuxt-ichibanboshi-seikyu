@@ -42,6 +42,8 @@ export interface MeisaiRow {
   itemName?: string
   /** 車輌C (車番、表示用) */
   vehicleNumber?: string
+  /** 車種N (車種ﾏｽﾀ名、表示用)。空 ('00' 等) なら sharuC にフォールバック。 */
+  vehicleName?: string
 }
 
 /**
