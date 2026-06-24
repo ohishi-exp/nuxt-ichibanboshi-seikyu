@@ -24,6 +24,8 @@ export interface IchibanSurchargeRow {
   item_code?: string
   /** 品名N (例: ※請求一括調整明細※)。producer 旧版では欠落し得るため optional */
   item_name?: string
+  /** 車輌C (車番。例: 8504)。producer 旧版では欠落し得るため optional */
+  vehicle_number?: string
 }
 
 /** 一番星 SurchargeRow[] → MeisaiRow[] (純粋)。請求日 null は空文字 (= 集計キーで空扱い) */
@@ -40,6 +42,7 @@ export function mapToMeisaiRows(rows: IchibanSurchargeRow[]): MeisaiRow[] {
     subcontractorCode: r.subcontractor_code,
     itemCode: r.item_code,
     itemName: r.item_name,
+    vehicleNumber: r.vehicle_number,
   }))
 }
 
