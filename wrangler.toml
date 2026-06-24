@@ -49,18 +49,19 @@ LINEWORKS_SERVICE_ACCOUNT = ""
 LINEWORKS_TARGET_TYPE = "channel"   # channel (トークルーム) | user
 LINEWORKS_TARGET_ID = ""
 
-# auth-worker のブラウザ JWT (logi_auth_token cookie) を /api/distance で署名検証する
-# ための HS256 鍵 JWT_SECRET。auth-worker / rust-alc-api / hcreader と同じ
-# CF Secrets Store entry を物理共有 (Refs HealthConnectReaderWorker#15)。
-# GCP cloudsql-sv に同名 secret が SoT として存在する (secret-verify が検証する)。
+# auth-worker POST /auth/introspect (ippoan/auth-worker#290) を叩くための共有 secret。
+# 本 worker は HS256 署名鍵 (JWT_SECRET) を持たず、INTERNAL_SHARED_SECRET で
+# introspect を認証する (auth-worker が resolveAllSharedSecrets で受理、#189)。
+# auth-worker / cc-relay broker / ref-files 等と同じ CF Secrets Store entry を
+# 物理共有。GCP cloudsql-sv に同名 secret が SoT として存在する (secret-verify が検証)。
 #
 # secrets_store_secrets を宣言すると frontend-ci の secret-verify が必須化するため、
 # test.yml で gcp_secret_verify_* を配線 + ohishi-exp に GCP WIF を許可する
 # (PR 本文の runbook 参照)。
 [[secrets_store_secrets]]
-binding = "JWT_SECRET"
+binding = "INTERNAL_SHARED_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "JWT_SECRET"
+secret_name = "INTERNAL_SHARED_SECRET"
 
 # 一番星 CF Access service token (rust-ichibanboshi-ci-deploy / 824a8b3c) の client_secret。
 # GCP cloudsql-sv の同名 secret を SoT とし、CF Secrets Store へ sync 済

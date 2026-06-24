@@ -1,25 +1,29 @@
 import type { H3Event } from 'h3'
+import { requireAuth as introspectRequireAuth } from '@ippoan/auth-client/server'
 
-// auth-worker のブラウザ JWT を server 側で署名検証する (距離制 /api/distance の gate)。
-// auth-worker は HS256 / JWT_SECRET (rust-alc-api・hcreader と CF Secrets Store 共有、
-// Refs HealthConnectReaderWorker#15) で署名する。同 secret を bind して検証する。
-// cookie 名は auth-client の AUTH_COOKIE_NAME = 'logi_auth_token' (Domain=.ippoan.org)。
+// ブラウザ JWT (logi_auth_token cookie / Bearer) の検証を auth-worker
+// POST /auth/introspect に委譲する認証 gate (ippoan/auth-worker#290 Phase 3)。
+//
+// 本 worker は **JWT_SECRET (署名鍵) を持たない**。INTERNAL_SHARED_SECRET で
+// introspect を叩き、auth-worker 側で ① 署名検証 ② APP_TENANT_ACL による
+// origin×tenant 判定 を行った結果 { active, tenant_id, role, email } を受け取る。
+// これにより共有 HS256 鍵を本 repo から撤去し、別アプリ cookie の流用
+// (#290 穴 #3) を auth-worker 側 APP_TENANT_ACL で塞ぐ。
+//
+// `@ippoan/auth-client/server` の requireAuth が cookie/Bearer 抽出・introspect・
+// short-TTL cache・401 throw を担うので、本ファイルは binding 解決と
+// authWorkerUrl 注入の薄いラッパーに徹する。
 
-const AUTH_COOKIE = 'logi_auth_token'
-const encoder = new TextEncoder()
-
-/** base64url → bytes */
-function b64urlToBytes(s: string): Uint8Array {
-  let b64 = s.replace(/-/g, '+').replace(/_/g, '/')
-  const rem = b64.length % 4
-  if (rem) b64 += '='.repeat(4 - rem)
-  const bin = atob(b64)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
+/** auth-worker /auth/introspect が返す active なクレーム。 */
+export type AuthClaims = {
+  active: true
+  tenant_id: string
+  role: string
+  email: string
+  exp?: number
 }
 
-/** Secrets Store binding (`.get()`) / 文字列 / 関数 のいずれでも値を取り出す */
+/** Secrets Store binding (`.get()`) / 文字列 のいずれでも値を取り出す。 */
 async function resolveSecret(binding: unknown): Promise<string | null> {
   if (typeof binding === 'string') return binding
   if (binding && typeof (binding as { get?: unknown }).get === 'function') {
@@ -28,94 +32,49 @@ async function resolveSecret(binding: unknown): Promise<string | null> {
   return null
 }
 
-/**
- * HS256 JWT を署名検証し payload を返す。署名不一致 / exp 切れ / 形式不正は null。
- * crypto.subtle.verify を使うので constant-time。
- */
-export async function verifyJwtHs256(
-  token: string,
-  secret: string,
-): Promise<Record<string, unknown> | null> {
-  const parts = token.split('.')
-  if (parts.length !== 3) return null
-  const [h, p, sig] = parts
-  if (!h || !p || !sig) return null
-  let valid = false
-  try {
-    const key = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['verify'],
-    )
-    valid = await crypto.subtle.verify(
-      'HMAC',
-      key,
-      b64urlToBytes(sig) as BufferSource,
-      encoder.encode(`${h}.${p}`) as BufferSource,
-    )
-  } catch {
-    return null
-  }
-  if (!valid) return null
-
-  let payload: Record<string, unknown>
-  try {
-    payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(p))) as Record<string, unknown>
-  } catch {
-    return null
-  }
-  if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) return null
-  return payload
-}
-
-/** Authorization: Bearer か logi_auth_token cookie から JWT を取り出す */
-function extractToken(event: H3Event): string | null {
-  const auth = getHeader(event, 'authorization')
-  if (auth && auth.startsWith('Bearer ')) return auth.slice(7).trim()
-  return getCookie(event, AUTH_COOKIE) ?? null
+function cfEnv(event: H3Event): Record<string, unknown> {
+  return (event.context.cloudflare as { env?: Record<string, unknown> } | undefined)?.env ?? {}
 }
 
 /**
- * /api/distance 等の保護エンドポイントで呼ぶ認証 gate。
- * auth-worker JWT を署名検証し、失敗時は 401 (JWT_SECRET 未設定は 503)。
- * 返り値は検証済み payload。tenant 制限自体は auth-worker (APP_TENANT_ACL) が
- * ログイン段で gate 済みのため、ここでは「有効な auth-worker token か」を検証する。
+ * 保護エンドポイントで呼ぶ認証 gate。INTERNAL_SHARED_SECRET で auth-worker の
+ * introspect を叩き、active な claims を返す。inactive (署名不正 / exp 切れ /
+ * 不許可テナント) は auth-client 側が 401 を throw する。binding 未設定は 503。
  */
-export async function requireAuth(event: H3Event): Promise<Record<string, unknown>> {
-  const secret = await resolveSecret(
-    (event.context.cloudflare as { env?: { JWT_SECRET?: unknown } } | undefined)?.env?.JWT_SECRET,
-  )
-  if (!secret) {
-    throw createError({ statusCode: 503, statusMessage: 'JWT_SECRET binding が未設定です' })
+export async function requireAuth(event: H3Event): Promise<AuthClaims> {
+  const env = cfEnv(event)
+  const sharedSecret = await resolveSecret(env.INTERNAL_SHARED_SECRET)
+  if (!sharedSecret) {
+    throw createError({
+      statusCode: 503,
+      statusMessage: 'INTERNAL_SHARED_SECRET binding が未設定です',
+    })
   }
-  const token = extractToken(event)
-  if (!token) {
-    throw createError({ statusCode: 401, statusMessage: '認証が必要です (auth-worker ログイン)' })
-  }
-  const payload = await verifyJwtHs256(token, secret)
-  if (!payload) {
-    throw createError({ statusCode: 401, statusMessage: 'JWT の検証に失敗しました' })
-  }
-  return payload
+  const authWorkerUrl =
+    typeof env.NUXT_PUBLIC_AUTH_WORKER_URL === 'string' && env.NUXT_PUBLIC_AUTH_WORKER_URL
+      ? env.NUXT_PUBLIC_AUTH_WORKER_URL
+      : 'https://auth.ippoan.org'
+
+  // origin は auth-client 側で getRequestURL(event).origin から解決される
+  // (custom_domain route なので公開 origin = ichibanboshi-seikyu.ippoan.org)。
+  return (await introspectRequireAuth(event, { authWorkerUrl, sharedSecret })) as AuthClaims
 }
 
 /**
- * JWT payload が管理者か (role === 'admin')。viewer / role 欠落は false。
- * role claim は auth-worker / rust-alc-api のブラウザ JWT に top-level で乗る
- * ('admin' | 'viewer'、auth-worker admin-users-html も同 claim を参照)。
+ * JWT claims が管理者か (role === 'admin')。viewer / role 欠落は false。
+ * role claim は auth-worker / rust-alc-api のブラウザ JWT に乗り、introspect の
+ * 出力にも含まれる。
  */
-export function isAdminPayload(payload: Record<string, unknown>): boolean {
+export function isAdminPayload(payload: { role?: unknown }): boolean {
   return payload.role === 'admin'
 }
 
 /**
- * 管理者 (role === 'admin') だけを通す gate。requireAuth で署名検証した上で
- * JWT の `role` claim を見る。admin 以外は 403。
- * マスタの参照・更新は全て管理者限定 (= 大石運輸倉庫テナントの admin のみ)。
+ * 管理者 (role === 'admin') だけを通す gate。requireAuth で introspect した上で
+ * role claim を見る。admin 以外は 403。マスタの参照・更新は全て管理者限定
+ * (= 大石運輸倉庫テナントの admin のみ)。
  */
-export async function requireAdmin(event: H3Event): Promise<Record<string, unknown>> {
+export async function requireAdmin(event: H3Event): Promise<AuthClaims> {
   const payload = await requireAuth(event)
   if (!isAdminPayload(payload)) {
     throw createError({ statusCode: 403, statusMessage: '管理者権限が必要です' })
