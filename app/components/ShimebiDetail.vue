@@ -55,23 +55,14 @@ function isSkipped(rowId?: string): boolean {
     <table class="grid">
       <thead>
         <tr>
-          <th>計算しない</th>
           <th>売上日</th><th>区分</th><th>積地</th><th>卸地</th><th>車種</th><th>車番</th><th>品名</th><th>運賃</th>
           <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
           <th>燃費 (km/L)</th><th>計算 (円)</th><th>実額 (円)</th><th>差額 (円)</th><th>照合</th><th>状態</th>
+          <th>計算しない</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="(d, i) in rows" :key="i" :class="{ 'row-skipped': isSkipped(d.row.rowId) }">
-          <td class="skip-col">
-            <input
-              type="checkbox"
-              :checked="isSkipped(d.row.rowId)"
-              :disabled="!d.row.rowId"
-              :title="d.row.rowId ? '計算対象から外す (保存)' : '行 ID 未取得のため skip 不可 (producer 要更新)'"
-              @change="d.row.rowId && emit('toggleSkip', d.row.rowId)"
-            />
-          </td>
           <td>{{ d.row.uriageDate }}</td>
           <td>{{ ownershipLabel(d.row.subcontractorCode) }}</td>
           <td>{{ d.row.fromPref }}</td>
@@ -97,6 +88,15 @@ function isSkipped(rowId?: string): boolean {
             <span v-if="d.status === 'ok'" class="badge-on">計上</span>
             <span v-else-if="d.status === 'warning'" class="warn-note">{{ d.warning }}</span>
             <span v-else class="badge-off">対象外</span>
+          </td>
+          <td class="skip-col">
+            <input
+              type="checkbox"
+              :checked="isSkipped(d.row.rowId)"
+              :disabled="!d.row.rowId"
+              :title="d.row.rowId ? '計算対象から外す (保存)' : '行 ID 未取得のため skip 不可 (producer 要更新)'"
+              @change="d.row.rowId && emit('toggleSkip', d.row.rowId)"
+            />
           </td>
         </tr>
       </tbody>
