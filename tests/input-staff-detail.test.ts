@@ -3,6 +3,7 @@ import {
   buildInputStaffRows,
   buildInputStaffCsv,
   listInputStaffCodes,
+  listInputStaffOptions,
 } from '../src/input-staff-detail'
 import type { SurchargeResult, MeisaiRow } from '../src/surcharge'
 
@@ -16,6 +17,7 @@ function res(opts: {
   actual?: number
   saleDate?: string
   sub?: string
+  staffName?: string
 }): SurchargeResult {
   const row: MeisaiRow = {
     tokuiC: opts.tokuiC,
@@ -31,6 +33,7 @@ function res(opts: {
     vehicleName: '大型',
     actualSurcharge: opts.actual ?? 0,
     inputStaffCode: opts.staff,
+    inputStaffName: opts.staffName,
   }
   return { row, status: opts.status ?? 'ok', amount: opts.amount ?? 0 }
 }
@@ -48,7 +51,30 @@ describe('listInputStaffCodes', () => {
   })
 })
 
+describe('listInputStaffOptions', () => {
+  it('コード昇順で {code,name,label} を返し、氏名があれば「コード 氏名」', () => {
+    const opts = listInputStaffOptions([
+      res({ tokuiC: 'A', staff: '1112', staffName: '西田　和恵' }),
+      res({ tokuiC: 'B', staff: '0012' }), // 氏名なし
+      res({ tokuiC: 'C', staff: '1112', staffName: '西田　和恵' }),
+    ])
+    expect(opts).toEqual([
+      { code: '0012', name: '', label: '0012' },
+      { code: '1112', name: '西田　和恵', label: '1112 西田　和恵' },
+    ])
+  })
+})
+
 describe('buildInputStaffRows', () => {
+  it('入力者氏名を行に写像する', () => {
+    const rows = buildInputStaffRows(
+      [res({ tokuiC: 'A', staff: '1112', staffName: '西田　和恵' })],
+      () => true,
+      '1112',
+    )
+    expect(rows[0]?.inputStaffName).toBe('西田　和恵')
+  })
+
   it('入力者指定時はその入力担当C の明細のみ (登録/未登録問わず)', () => {
     const rows = buildInputStaffRows(
       [
@@ -130,7 +156,7 @@ describe('buildInputStaffCsv', () => {
     const csv = buildInputStaffCsv(rows)
     const lines = csv.split('\r\n')
     expect(lines[0]).toBe(
-      '入力者,売上年月日,請求日,取引先コード,取引先名,車番,車種,積地県,卸地県,自車傭車,運賃,計算サーチャージ,実額(割増C19),差額,登録',
+      '入力者,入力者氏名,売上年月日,請求日,取引先コード,取引先名,車番,車種,積地県,卸地県,自車傭車,運賃,計算サーチャージ,実額(割増C19),差額,登録',
     )
     expect(lines[1]).toContain('"甲, 社"') // カンマを含む取引先名は quote
     expect(lines[1]).toContain('0012')
@@ -139,7 +165,7 @@ describe('buildInputStaffCsv', () => {
 
   it('空行は header のみ', () => {
     expect(buildInputStaffCsv([])).toBe(
-      '入力者,売上年月日,請求日,取引先コード,取引先名,車番,車種,積地県,卸地県,自車傭車,運賃,計算サーチャージ,実額(割増C19),差額,登録',
+      '入力者,入力者氏名,売上年月日,請求日,取引先コード,取引先名,車番,車種,積地県,卸地県,自車傭車,運賃,計算サーチャージ,実額(割増C19),差額,登録',
     )
   })
 })

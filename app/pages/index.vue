@@ -13,7 +13,7 @@ import {
 import {
   buildInputStaffRows,
   buildInputStaffCsv,
-  listInputStaffCodes,
+  listInputStaffOptions,
   type InputStaffRow,
 } from '../../src/input-staff-detail'
 import { aggregateByCustomer, type ShimebiCustomerRow } from '../../src/shimebi-summary'
@@ -690,15 +690,8 @@ const skippedRowIds = ref<Set<string>>(new Set())
 // 入力者 (入力担当C) 絞り込み。空 ('') = 入力者指定なし → 登録済み取引先のみ表示。
 const selectedInputStaff = ref('')
 
-/** 取得済み結果に含まれる入力担当C の一覧 (昇順、空欄除く)。入力者ドロップダウン用 */
-const inputStaffOptions = computed(() => {
-  const set = new Set<string>()
-  for (const r of shimebiResults.value) {
-    const code = r.row.inputStaffCode
-    if (code) set.add(code)
-  }
-  return [...set].sort()
-})
+/** 取得済み結果に含まれる入力者の選択肢 (コード + 氏名、昇順)。入力者ドロップダウン用 */
+const inputStaffOptions = computed(() => listInputStaffOptions(shimebiResults.value))
 
 /** skip 行を除いた計算結果 (集計対象) */
 function nonSkippedResults(results: SurchargeResult[]): SurchargeResult[] {
@@ -1082,7 +1075,7 @@ const isSelectedStaff = ref('')
 // 取得対象の売上年月 (前月、表示用)。
 const isTargetMonth = ref('')
 
-const isStaffOptions = computed(() => listInputStaffCodes(isAllResults.value))
+const isStaffOptions = computed(() => listInputStaffOptions(isAllResults.value))
 const isRows = computed<InputStaffRow[]>(() =>
   buildInputStaffRows(
     isAllResults.value,
@@ -1778,8 +1771,8 @@ watch(
             入力者
             <select v-model="selectedInputStaff" :disabled="shimebiState !== 'done'">
               <option value="">指定なし (登録済みのみ)</option>
-              <option v-for="code in inputStaffOptions" :key="code" :value="code">
-                {{ code }}
+              <option v-for="o in inputStaffOptions" :key="o.code" :value="o.code">
+                {{ o.label }}
               </option>
             </select>
           </label>
@@ -1928,8 +1921,8 @@ watch(
             入力者
             <select v-model="isSelectedStaff" :disabled="isState !== 'done'">
               <option value="">指定なし (登録済みのみ)</option>
-              <option v-for="code in isStaffOptions" :key="code" :value="code">
-                {{ code }}
+              <option v-for="o in isStaffOptions" :key="o.code" :value="o.code">
+                {{ o.label }}
               </option>
             </select>
           </label>
@@ -1960,7 +1953,7 @@ watch(
             </thead>
             <tbody>
               <tr v-for="(r, i) in isRows" :key="`${r.inputStaffCode}-${r.customerCode}-${r.saleDate}-${i}`">
-                <td>{{ r.inputStaffCode || '—' }}</td>
+                <td>{{ r.inputStaffCode || '—' }}{{ r.inputStaffName ? ` ${r.inputStaffName}` : '' }}</td>
                 <td>{{ r.saleDate }}</td>
                 <td>{{ r.customerCode }} {{ r.customerName }}</td>
                 <td>{{ r.vehicleNumber }}</td>
