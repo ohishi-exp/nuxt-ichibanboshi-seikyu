@@ -3,6 +3,7 @@
 // 別タブページ (pages/shimebi-detail.vue) で共有する。Refs #11
 import type { SurchargeResult } from '../../src/surcharge'
 import { ownershipLabel, reconcileRow } from '../../src/surcharge-review'
+import { detectKumiawaseKeys, kumiawaseKey } from '../../src/kumiawase'
 
 const props = withDefaults(
   defineProps<{
@@ -29,6 +30,13 @@ function dieselPriceForRow(uriageDate: string): number | null {
 function isSkipped(rowId?: string): boolean {
   return !!rowId && props.skippedRowIds.has(rowId)
 }
+
+// 積み合わせ警告: 同一 (売上日+車番+積地) が 2 行以上ある行を薄い黄色で警告する。
+const kumiawaseKeys = computed(() => detectKumiawaseKeys(props.rows.map((r) => r.row)))
+function isKumiawase(d: SurchargeResult): boolean {
+  const k = kumiawaseKey(d.row)
+  return !!k && kumiawaseKeys.value.has(k)
+}
 </script>
 
 <template>
@@ -51,6 +59,8 @@ function isSkipped(rowId?: string): boolean {
       <strong>実額</strong>は一番星の割増 (割増C=19 燃料ｻｰﾁｬｰｼﾞ) で、各行で計算と実額を照合します
       (差額 = 計算 − 実額、正=未計上 / 負=過計上 / 0=一致)。
       <strong>計算しない</strong>にチェックした行は集計から除外され、行 ID (管理年月日+管理C) で保存されます。
+      <strong style="background: #fef9c3">薄い黄色</strong>の行は積み合わせ警告 (同じ売上日・車番・積地が
+      複数 = 品目/卸地違いの積み合わせ)。行ごとに計算すると距離が重複計上され得るため要確認です。
     </p>
     <table class="grid">
       <thead>
@@ -62,7 +72,15 @@ function isSkipped(rowId?: string): boolean {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(d, i) in rows" :key="i" :class="{ 'row-skipped': isSkipped(d.row.rowId) }">
+        <tr
+          v-for="(d, i) in rows"
+          :key="i"
+          :class="{
+            'row-skipped': isSkipped(d.row.rowId),
+            'row-kumiawase': isKumiawase(d) && !isSkipped(d.row.rowId),
+          }"
+          :title="isKumiawase(d) ? '積み合わせ警告: 同じ売上日・車番・積地の行が複数あります (品目/卸地違い)。距離の重複計上に注意' : undefined"
+        >
           <td>{{ d.row.uriageDate }}</td>
           <td>{{ ownershipLabel(d.row.subcontractorCode) }}</td>
           <td>{{ d.row.fromPref }}</td>
@@ -167,6 +185,10 @@ function isSkipped(rowId?: string): boolean {
   opacity: 0.5;
   text-decoration: line-through;
   background: #f9fafb;
+}
+/* 積み合わせ警告 (同じ売上日+車番+積地が複数行) */
+.row-kumiawase {
+  background: #fef9c3;
 }
 .warn-note {
   font-size: 0.78rem;
