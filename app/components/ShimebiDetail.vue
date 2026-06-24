@@ -11,7 +11,10 @@ const props = defineProps<{
   rows: SurchargeResult[]
   /** "YYYY-MM" -> 当月軽油価格 (円/L) */
   dieselMap: Record<string, number>
+  /** m.tama.ramu のみ true。一番星 生データ取得 (debug) ボタンの出し分け */
+  debugEnabled?: boolean
 }>()
+const emit = defineEmits<{ debug: [] }>()
 
 function dieselPriceForRow(uriageDate: string): number | null {
   return props.dieselMap[uriageDate.slice(0, 7)] ?? null
@@ -22,6 +25,15 @@ function dieselPriceForRow(uriageDate: string): number | null {
   <div>
     <h3 class="view-title">
       明細・計算根拠 — {{ code }} {{ name }}（締め日 {{ date }}）
+      <button
+        v-if="debugEnabled"
+        type="button"
+        class="btn-debug-inline"
+        title="一番星 (rust-ichibanboshi) の surcharge/base 生データを取得し重複検出 + JSON download (debug)"
+        @click="emit('debug')"
+      >
+        🐞 一番星 生データ取得 (debug)
+      </button>
     </h3>
     <p class="lead-note">
       サーチャージ = 切上(距離 km ÷ 燃費 km/L × 上昇額 円/L)。上昇額は当月軽油価格を段階表に当てた値
@@ -106,5 +118,19 @@ function dieselPriceForRow(uriageDate: string): number | null {
 .warn-note {
   font-size: 0.78rem;
   color: #b45309;
+}
+.btn-debug-inline {
+  margin-left: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: #6b7280;
+  color: #fff;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.btn-debug-inline:hover {
+  background: #4b5563;
 }
 </style>
