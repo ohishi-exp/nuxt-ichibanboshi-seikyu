@@ -61,6 +61,11 @@ export interface MeisaiRow {
    * producer (rust-ichibanboshi #12 以降) で返る。旧版は欠落 (undefined)。
    */
   inputStaffCode?: string
+  /**
+   * 入力者氏名 (社員ﾏｽﾀ.社員N)。入力者ドロップダウン/明細の表示用。
+   * producer (rust-ichibanboshi #29 以降) で返る。未マップ/旧版は空 or undefined。
+   */
+  inputStaffName?: string
 }
 
 /**

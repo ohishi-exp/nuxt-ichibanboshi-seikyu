@@ -14,6 +14,8 @@ import { reconcileRow, ownershipLabel } from './surcharge-review'
 export interface InputStaffRow {
   /** 入力担当C (入力者) */
   inputStaffCode: string
+  /** 入力者氏名 (社員ﾏｽﾀ.社員N、未マップは空) */
+  inputStaffName: string
   /** 売上年月日 (YYYY-MM-DD) */
   saleDate: string
   /** 請求日 (入金予定日、空あり) */
@@ -60,6 +62,7 @@ export function buildInputStaffRows(
     const rec = reconcileRow(r)
     return {
       inputStaffCode: r.row.inputStaffCode ?? '',
+      inputStaffName: r.row.inputStaffName ?? '',
       saleDate: r.row.uriageDate,
       billingDate: r.row.seikyuDate ?? '',
       customerCode: r.row.tokuiC,
@@ -94,8 +97,35 @@ export function listInputStaffCodes(results: SurchargeResult[]): string[] {
   return [...set].sort()
 }
 
+/** 入力者ドロップダウンの選択肢 (コード + 氏名)。`label` は氏名があれば「コード 氏名」、無ければコードのみ。 */
+export interface InputStaffOption {
+  code: string
+  name: string
+  label: string
+}
+
+/**
+ * 取得済み結果から入力者の選択肢を組み立てる (純粋、コード昇順・空欄除く)。
+ * 同一コードに複数の氏名候補があれば最初の非空を採用する (通常は 1 対 1)。
+ */
+export function listInputStaffOptions(results: SurchargeResult[]): InputStaffOption[] {
+  const names = new Map<string, string>()
+  for (const r of results) {
+    const code = r.row.inputStaffCode
+    if (!code) continue
+    if (!names.get(code)) names.set(code, r.row.inputStaffName ?? '')
+  }
+  return [...names.keys()]
+    .sort()
+    .map((code) => {
+      const name = names.get(code) ?? ''
+      return { code, name, label: name ? `${code} ${name}` : code }
+    })
+}
+
 const CSV_HEADER = [
   '入力者',
+  '入力者氏名',
   '売上年月日',
   '請求日',
   '取引先コード',
@@ -124,6 +154,7 @@ export function buildInputStaffCsv(rows: InputStaffRow[]): string {
     lines.push(
       [
         r.inputStaffCode,
+        r.inputStaffName,
         r.saleDate,
         r.billingDate,
         r.customerCode,
