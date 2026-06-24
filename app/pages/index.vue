@@ -1063,8 +1063,9 @@ function onExportShimebiCsv() {
   URL.revokeObjectURL(url)
 }
 
-// --- 入力者別 明細 (締め日別とは別タブ。締め日に非連動、直近 1 ヶ月 = 前月 固定)。 ---
-// 売上年月 = 前月 (例: 6 月中は 5 月) を 1 ヶ月分だけ取得し、運転日報明細 1 行 = 1 行で並べる。
+// --- 入力者別 明細 (締め日別とは別タブ。締め日に非連動、前月と今月 固定)。 ---
+// 売上年月 = 前月〜今月 (例: 6 月中は 5〜6 月) を取得し、運転日報明細 1 行 = 1 行で並べる。
+// 表示は常にサーチャージ対象 登録済みの取引先のみ (入力者選択時はそのうち入力者一致行)。
 // 入力者を選ぶとその入力者の明細のみ / 選ばないと登録済み (サーチャージ対象) 取引先の明細のみ。
 const isState = ref<ViewState>('idle')
 const isMsg = ref('')
@@ -1072,7 +1073,7 @@ const isMsg = ref('')
 const isAllResults = ref<SurchargeResult[]>([])
 // 入力者 (入力担当C) 選択。空 ('') = 登録済みのみ全員表示。
 const isSelectedStaff = ref('')
-// 取得対象の売上年月 (前月、表示用)。
+// 取得対象の売上年月 (前月〜今月、表示用)。
 const isTargetMonth = ref('')
 
 const isStaffOptions = computed(() => listInputStaffOptions(isAllResults.value))
@@ -1135,14 +1136,15 @@ async function fetchComputedRange(
 async function onRunInputStaff() {
   const now = new Date()
   const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const target = shiftMonth(ym, -1) // 前月 (6 月中は 5 月)
-  isTargetMonth.value = target
+  const fromYm = shiftMonth(ym, -1) // 前月
+  const toYm = ym // 今月
+  isTargetMonth.value = `${fromYm}〜${toYm}` // 前月〜今月 (表示用)
   isState.value = 'loading'
   isMsg.value = ''
   isAllResults.value = []
   isSelectedStaff.value = '' // 既定は「登録済みのみ」
   try {
-    const r = await fetchComputedRange(target, target)
+    const r = await fetchComputedRange(fromYm, toYm)
     if (!r.ok) {
       isState.value = 'error'
       isMsg.value = r.errorMsg
@@ -1184,7 +1186,7 @@ watch(
     if (sec === 'diesel' && dieselViewState.value === 'idle') void loadDieselView()
     if (sec === 'surchargeCustomers' && scState.value === 'idle') void loadSurchargeCustomers()
     if (sec === 'shimebi' && scState.value === 'idle') void loadSurchargeCustomers()
-    // 入力者別タブは開いた時に前月分を自動取得 (ボタン不要)。loadSurchargeCustomers は
+    // 入力者別タブは開いた時に前月〜今月分を自動取得 (ボタン不要)。loadSurchargeCustomers は
     // onRunInputStaff 内の fetchComputedRange が呼ぶので個別呼び出しは不要。
     if (sec === 'inputStaff' && isState.value === 'idle' && import.meta.client) {
       void onRunInputStaff()
@@ -1907,13 +1909,13 @@ watch(
         </template>
       </section>
 
-      <!-- 入力者別 明細 (締め日別とは別タブ。締め日に非連動・前月固定・明細単位) -->
+      <!-- 入力者別 明細 (締め日別とは別タブ。締め日に非連動・前月〜今月・明細単位・登録済みのみ) -->
       <section v-else-if="active === 'inputStaff'" class="card">
         <h2>入力者別 明細</h2>
         <p class="lead-note">
-          一番星の<strong>前月分 (売上年月)</strong> の運転日報明細を、<strong>1 行 = 1 明細</strong>で一覧します
-          (締め日 / 請求日には連動しません)。<strong>入力者</strong>を選ぶとその入力者 (入力担当C) の明細だけに、
-          <strong>未選択</strong>のときは<strong>サーチャージ対象に登録済みの取引先</strong>の明細だけに絞ります。
+          一番星の<strong>前月〜今月 (売上年月)</strong> の運転日報明細を、<strong>1 行 = 1 明細</strong>で一覧します
+          (締め日 / 請求日には連動しません)。表示は<strong>常にサーチャージ対象に登録済みの取引先</strong>のみで、
+          <strong>入力者</strong>を選ぶとそのうち入力者 (入力担当C) が一致する明細だけに絞り込みます。
           一覧と同じ内容を CSV 出力できます。
         </p>
         <div class="actions">
@@ -1921,7 +1923,7 @@ watch(
           <button
             class="btn"
             :disabled="isState === 'loading'"
-            title="前月分を取り直す"
+            title="前月〜今月分を取り直す"
             @click="onRunInputStaff"
           >
             {{ isState === 'loading' ? '取得中…' : '再取得' }}
@@ -1981,7 +1983,7 @@ watch(
             </tbody>
           </table>
           <p v-else class="status">
-            {{ isSelectedStaff ? `入力者 ${isSelectedStaff} の前月明細がありません` : '前月に登録済み取引先の明細がありません' }}
+            {{ isSelectedStaff ? `入力者 ${isSelectedStaff} の前月〜今月の登録済み明細がありません` : '前月〜今月に登録済み取引先の明細がありません' }}
           </p>
         </template>
       </section>

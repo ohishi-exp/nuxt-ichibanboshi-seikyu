@@ -46,8 +46,8 @@ export interface InputStaffRow {
 
 /**
  * 計算結果から「入力者別 明細」行を組み立てる (純粋)。
- * - `selectedStaff` 指定時: その入力担当C の行のみ
- * - `selectedStaff` 空 ('')   : `isRegistered` が true の取引先の行のみ (= 登録済みのみ全員表示)
+ * **常にサーチャージ対象 登録済み (`isRegistered` が true) の取引先のみ**に絞る。
+ * `selectedStaff` 指定時は、その登録済み行のうち入力担当C が一致するものに更に絞る。
  * 並び順は 入力者 → 売上年月日 → 取引先コード。
  */
 export function buildInputStaffRows(
@@ -55,8 +55,10 @@ export function buildInputStaffRows(
   isRegistered: (code: string) => boolean,
   selectedStaff: string,
 ): InputStaffRow[] {
-  const filtered = results.filter((r) =>
-    selectedStaff ? (r.row.inputStaffCode ?? '') === selectedStaff : isRegistered(r.row.tokuiC),
+  const filtered = results.filter(
+    (r) =>
+      isRegistered(r.row.tokuiC) &&
+      (selectedStaff ? (r.row.inputStaffCode ?? '') === selectedStaff : true),
   )
   const rows: InputStaffRow[] = filtered.map((r) => {
     const rec = reconcileRow(r)
