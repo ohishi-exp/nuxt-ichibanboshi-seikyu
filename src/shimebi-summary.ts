@@ -1,9 +1,9 @@
 // 締め日別 (請求月) の取引先サマリを計算エンジンの結果から組み立てる純粋関数。Refs #11
 //
 // computeSurcharge の SurchargeResult[] を取引先 (取引先コード) 単位に集計し、
-// 金額 (運賃合計=実請求) / サーチャージ金額 (計算) / 登録有無 / 差額 を出す。
-// 差額 = 実請求との差。一番星は燃料サーチャージを別建てで返さない (= 実請求サーチャージ 0)
-//        ため、差額 = 計算サーチャージ合計 (= 現状の請求に未計上で、今後請求すべき額)。
+// 金額 (運賃合計=実請求) / サーチャージ金額 (計算) / 実額 (割増C=19) / 登録有無 / 差額 を出す。
+// 差額 = 計算サーチャージ合計 − 実額サーチャージ合計 (割増C=19、producer #26 の fuel_surcharge)。
+//        正 = 現状の請求に未計上で今後請求すべき額 / 負 = 過計上 / 0 = 一致。
 
 import type { SurchargeResult } from './surcharge'
 
@@ -14,9 +14,11 @@ export interface ShimebiCustomerRow {
   fareTotal: number
   /** 計算サーチャージ合計 (ok 行のみ。対象外/警告は 0) */
   surchargeTotal: number
+  /** 実額サーチャージ合計 (割増C=19、producer #26 の fuel_surcharge) */
+  actualTotal: number
   /** サーチャージマスタ登録有無 */
   registered: boolean
-  /** 差額 = 実請求との差 (= surchargeTotal、実請求サーチャージ 0 前提) */
+  /** 差額 = 計算サーチャージ合計 − 実額サーチャージ合計 (正=未計上 / 負=過計上 / 0=一致) */
   diff: number
   /** 未計上 (warning) 行数。距離/当月価格欠落で算定不能だった行の参考値 */
   warningCount: number
@@ -40,6 +42,7 @@ export function aggregateByCustomer(
         customerName: r.row.tokuiName ?? '',
         fareTotal: 0,
         surchargeTotal: 0,
+        actualTotal: 0,
         registered: isRegistered(code),
         diff: 0,
         warningCount: 0,
@@ -47,13 +50,14 @@ export function aggregateByCustomer(
       map.set(code, agg)
     }
     agg.fareTotal += r.row.unchin
-    agg.surchargeTotal += r.amount
+    if (r.status === 'ok') agg.surchargeTotal += r.amount
+    agg.actualTotal += r.row.actualSurcharge ?? 0
     if (r.status === 'warning') agg.warningCount += 1
     if (!agg.customerName && r.row.tokuiName) agg.customerName = r.row.tokuiName
   }
   for (const agg of map.values()) {
-    // 差額 = 実請求との差。実請求サーチャージ 0 前提 → 計算サーチャージ合計。
-    agg.diff = agg.surchargeTotal
+    // 差額 = 計算サーチャージ合計 − 実額サーチャージ合計 (割増C=19)。
+    agg.diff = agg.surchargeTotal - agg.actualTotal
   }
   return [...map.values()].sort((a, b) => a.customerCode.localeCompare(b.customerCode))
 }

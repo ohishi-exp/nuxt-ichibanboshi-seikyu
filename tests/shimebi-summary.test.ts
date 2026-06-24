@@ -19,8 +19,13 @@ function res(
   unchin: number,
   status: SurchargeResult['status'],
   amount: number,
+  actual = 0,
 ): SurchargeResult {
-  return { row: { ...meisai(tokuiC, name, unchin), unchin } as MeisaiRow, status, amount }
+  return {
+    row: { ...meisai(tokuiC, name, unchin), unchin, actualSurcharge: actual } as MeisaiRow,
+    status,
+    amount,
+  }
 }
 
 describe('aggregateByCustomer', () => {
@@ -35,7 +40,22 @@ describe('aggregateByCustomer', () => {
     const a = rows[0]!
     expect(a.fareTotal).toBe(5000)
     expect(a.surchargeTotal).toBe(200)
-    expect(a.diff).toBe(200) // 差額 = 実請求との差 = 計算サーチャージ
+    expect(a.actualTotal).toBe(0) // 実額未提供 → 0
+    expect(a.diff).toBe(200) // 差額 = 計算(200) − 実額(0)
+  })
+
+  it('実額(割増C=19)を actualTotal に集計し 差額 = 計算 − 実額', () => {
+    const rows = aggregateByCustomer(
+      [
+        res('A001', '甲社', 1000, 'ok', 120, 100),
+        res('A001', '甲社', 2000, 'ok', 80, 80), // 一致行
+      ],
+      () => false,
+    )
+    const a = rows[0]!
+    expect(a.surchargeTotal).toBe(200) // 計算 120+80
+    expect(a.actualTotal).toBe(180) // 実額 100+80
+    expect(a.diff).toBe(20) // 200 − 180 (未計上 20)
   })
 
   it('登録有無を isRegistered で判定', () => {

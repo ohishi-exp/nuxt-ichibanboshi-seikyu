@@ -4,7 +4,7 @@
 // 一番星 (rust-ichibanboshi) の SurchargeRow は county 正規化済み・運賃合算済みで返るので、
 // ここでは field 名を MeisaiRow に合わせ、null の請求日を空文字に正規化するだけ。
 
-import type { MeisaiRow } from './surcharge'
+import type { MeisaiRow, SurchargeResult } from './surcharge'
 
 /** 一番星 GET /api/surcharge/base の data[] 1 行 (rust-ichibanboshi routes/surcharge.rs SurchargeRow) */
 export interface IchibanSurchargeRow {
@@ -26,6 +26,8 @@ export interface IchibanSurchargeRow {
   item_name?: string
   /** 車輌C (車番。例: 8504)。producer 旧版では欠落し得るため optional */
   vehicle_number?: string
+  /** 実額サーチャージ (割増C='19' = 燃料ｻｰﾁｬｰｼﾞ)。producer (#26) 以降で返る。旧版は欠落 */
+  fuel_surcharge?: number
 }
 
 /** 一番星 SurchargeRow[] → MeisaiRow[] (純粋)。請求日 null は空文字 (= 集計キーで空扱い) */
@@ -44,7 +46,29 @@ export function mapToMeisaiRows(rows: IchibanSurchargeRow[]): MeisaiRow[] {
     itemName: r.item_name,
     vehicleNumber: r.vehicle_number,
     vehicleName: r.vehicle_name,
+    actualSurcharge: r.fuel_surcharge ?? 0,
   }))
+}
+
+/**
+ * 1 行の「計算 vs 実額(割増C=19)」照合結果 (純粋)。Refs #63
+ * - computed: 計算サーチャージ (届出書方式、SurchargeResult.amount。status!=='ok' は 0)
+ * - actual:   実額サーチャージ (producer の fuel_surcharge = 割増C='19')
+ * - diff:     computed - actual (正 = 未計上で今後請求すべき額 / 負 = 過計上)
+ * - match:    computed === actual (完全一致)
+ */
+export interface RowReconcile {
+  computed: number
+  actual: number
+  diff: number
+  match: boolean
+}
+
+export function reconcileRow(result: SurchargeResult): RowReconcile {
+  const computed = result.status === 'ok' ? result.amount : 0
+  const actual = result.row.actualSurcharge ?? 0
+  const diff = computed - actual
+  return { computed, actual, diff, match: diff === 0 }
 }
 
 /**

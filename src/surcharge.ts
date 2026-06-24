@@ -44,6 +44,12 @@ export interface MeisaiRow {
   vehicleNumber?: string
   /** 車種N (車種ﾏｽﾀ名、表示用)。空 ('00' 等) なら sharuC にフォールバック。 */
   vehicleName?: string
+  /**
+   * 実額サーチャージ (円)。producer (rust-ichibanboshi#26) の `fuel_surcharge`
+   * = 運転日報割増明細の `割増C='19'` (燃料ｻｰﾁｬｰｼﾞ) 実額。計算には使わず、
+   * 「計算 vs 実額」の行照合 (reconcileRow) で参照する。producer 旧版欠落時は 0。
+   */
+  actualSurcharge?: number
 }
 
 /**

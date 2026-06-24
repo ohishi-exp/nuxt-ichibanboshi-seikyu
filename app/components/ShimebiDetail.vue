@@ -2,7 +2,7 @@
 // 締め日別 取引先の「明細 + 計算根拠」表。締め日別画面 (下/右/モーダル) と
 // 別タブページ (pages/shimebi-detail.vue) で共有する。Refs #11
 import type { SurchargeResult } from '../../src/surcharge'
-import { ownershipLabel } from '../../src/surcharge-review'
+import { ownershipLabel, reconcileRow } from '../../src/surcharge-review'
 
 const props = defineProps<{
   code: string
@@ -36,15 +36,17 @@ function dieselPriceForRow(uriageDate: string): number | null {
       </button>
     </h3>
     <p class="lead-note">
-      サーチャージ = 切上(距離 km ÷ 燃費 km/L × 上昇額 円/L)。上昇額は当月軽油価格を段階表に当てた値
+      計算サーチャージ = 切上(距離 km ÷ 燃費 km/L × 上昇額 円/L)。上昇額は当月軽油価格を段階表に当てた値
       (基準価格以下は 0)。未計上は距離/当月価格の欠落が理由です。
+      <strong>実額</strong>は一番星の割増 (割増C=19 燃料ｻｰﾁｬｰｼﾞ) で、各行で計算と実額を照合します
+      (差額 = 計算 − 実額、正=未計上 / 負=過計上 / 0=一致)。
     </p>
     <table class="grid">
       <thead>
         <tr>
           <th>売上日</th><th>区分</th><th>積地</th><th>卸地</th><th>車種</th><th>車番</th><th>品名</th><th>運賃</th>
           <th>当月軽油 (円/L)</th><th>上昇額 (円/L)</th><th>距離 (km)</th>
-          <th>燃費 (km/L)</th><th>サーチャージ (円)</th><th>状態</th>
+          <th>燃費 (km/L)</th><th>計算 (円)</th><th>実額 (円)</th><th>差額 (円)</th><th>照合</th><th>状態</th>
         </tr>
       </thead>
       <tbody>
@@ -61,7 +63,15 @@ function dieselPriceForRow(uriageDate: string): number | null {
           <td class="num">{{ d.increment ?? '—' }}</td>
           <td class="num">{{ d.km ?? '—' }}</td>
           <td class="num">{{ d.efficiency ?? '—' }}</td>
-          <td class="num">{{ d.amount.toLocaleString() }}</td>
+          <td class="num">{{ reconcileRow(d).computed.toLocaleString() }}</td>
+          <td class="num">{{ reconcileRow(d).actual.toLocaleString() }}</td>
+          <td class="num" :class="reconcileRow(d).diff === 0 ? '' : 'diff-nz'">
+            {{ reconcileRow(d).diff.toLocaleString() }}
+          </td>
+          <td>
+            <span v-if="reconcileRow(d).match" class="badge-on">一致</span>
+            <span v-else class="badge-diff">差異</span>
+          </td>
           <td>
             <span v-if="d.status === 'ok'" class="badge-on">計上</span>
             <span v-else-if="d.status === 'warning'" class="warn-note">{{ d.warning }}</span>
@@ -116,6 +126,18 @@ function dieselPriceForRow(uriageDate: string): number | null {
   font-size: 0.78rem;
   background: #f3f4f6;
   color: #6b7280;
+}
+.badge-diff {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.78rem;
+  background: #fef3c7;
+  color: #92400e;
+}
+.diff-nz {
+  color: #b45309;
+  font-weight: 600;
 }
 .warn-note {
   font-size: 0.78rem;

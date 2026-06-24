@@ -1476,9 +1476,9 @@ watch(
           締め日 (請求日 / 入金予定日) を指定すると、その締め日に請求のある取引先を取引先コード順に
           一覧します。各取引先の運賃合計・計算サーチャージ・マスタ登録有無・差額を表示し、その場で
           サーチャージ対象の登録/解除ができます。<strong>取引先名をクリック</strong>すると明細と計算根拠を表示します。<br />
-          対象は <strong>請求K 0 (通常運送) と 1 (請求のみ)</strong>。差額 = 実請求との差で、一番星は
-          燃料サーチャージを別建てで返さないため 差額 = 計算サーチャージ (= 現状の請求に未計上で今後
-          請求すべき額) です。
+          対象は <strong>請求K 0 (通常運送) と 1 (請求のみ)</strong>。<strong>実額</strong>は一番星の割増
+          (割増C=19 燃料ｻｰﾁｬｰｼﾞ) で、差額 = 計算サーチャージ − 実額 (正 = 未計上で今後請求すべき額 /
+          負 = 過計上 / 0 = 一致)。取引先名クリックで各明細行の計算 vs 実額を照合できます。
         </p>
         <div class="actions">
           <label class="inline-label">
@@ -1523,7 +1523,8 @@ watch(
                 <th>取引先コード</th>
                 <th>取引先名</th>
                 <th>金額 (運賃)</th>
-                <th>サーチャージ金額</th>
+                <th>計算サーチャージ</th>
+                <th>実額 (割増C=19)</th>
                 <th>登録</th>
                 <th>差額</th>
                 <th></th>
@@ -1539,13 +1540,14 @@ watch(
                 </td>
                 <td class="num">{{ r.fareTotal.toLocaleString() }}</td>
                 <td class="num">{{ r.surchargeTotal.toLocaleString() }}</td>
+                <td class="num">{{ r.actualTotal.toLocaleString() }}</td>
                 <td>
                   <span :class="r.registered ? 'badge-on' : 'badge-off'">
                     {{ r.registered ? '登録済' : '未登録' }}
                   </span>
                   <span v-if="r.warningCount" class="warn-note">（未計上 {{ r.warningCount }}）</span>
                 </td>
-                <td class="num">{{ r.diff.toLocaleString() }}</td>
+                <td class="num" :class="r.diff === 0 ? '' : 'diff-nz'">{{ r.diff.toLocaleString() }}</td>
                 <td class="row-ops">
                   <button
                     :class="r.registered ? 'link-del' : 'link-save'"
@@ -1967,6 +1969,10 @@ nav {
   margin-left: 0.4rem;
   font-size: 0.75rem;
   color: #b45309;
+}
+.diff-nz {
+  color: #b45309;
+  font-weight: 600;
 }
 /* 締め日別: 取引先名クリックで明細展開 */
 .link-name {
