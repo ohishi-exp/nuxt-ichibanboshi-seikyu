@@ -44,7 +44,11 @@ function isKumiawase(d: SurchargeResult): boolean {
 </script>
 
 <template>
-  <div>
+  <div class="detail-wrap">
+    <div v-if="refetching" class="refetch-overlay">
+      <span class="spinner" aria-label="再取得中" />
+      <span class="refetch-text">再取得中…</span>
+    </div>
     <h3 class="view-title">
       明細・計算根拠 — {{ code }} {{ name }}（締め日 {{ date }}）
       <button
@@ -137,6 +141,39 @@ function isKumiawase(d: SurchargeResult): boolean {
 </template>
 
 <style scoped>
+.detail-wrap {
+  position: relative;
+}
+/* 再取得中: 明細の上に半透明オーバーレイ + スピナー (モーダルは閉じない) */
+.refetch-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: rgba(255, 255, 255, 0.7);
+}
+.spinner {
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 3px solid #c7d2fe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.refetch-text {
+  font-size: 0.85rem;
+  color: #2563eb;
+  font-weight: 600;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .view-title {
   font-size: 1rem;
   margin: 1rem 0 0.5rem;
