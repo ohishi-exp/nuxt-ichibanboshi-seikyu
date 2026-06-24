@@ -708,6 +708,74 @@ function dieselPriceForRow(uriageDate: string): number | null {
   return shimebiDieselMap.value[uriageDate.slice(0, 7)] ?? null
 }
 
+// debug: m.tama.ramu だけに「一番星 生データ取得」ボタンを出す (請求明細の重複調査用)。
+const currentEmail = ref<string | null>(null)
+const isDebugUser = computed(() => currentEmail.value === 'm.tama.ramu@gmail.com')
+onMounted(async () => {
+  try {
+    const me = await $fetch<{ email?: string | null }>('/api/whoami')
+    currentEmail.value = me.email ?? null
+  } catch {
+    currentEmail.value = null
+  }
+})
+
+// 一番星 (rust-ichibanboshi) の surcharge/base 生データを締め日範囲で取得し、
+// 完全一致重複の検出付きで console + JSON download に吐く。計算・集計はしない。
+async function onDebugIchiban() {
+  const date = shimebiDate.value
+  if (!date) {
+    shimebiState.value = 'error'
+    shimebiMsg.value = '締め日 (請求日) を入力してください'
+    return
+  }
+  const ym = date.slice(0, 7)
+  const from = shiftMonth(ym, -2)
+  const to = shiftMonth(ym, 1)
+  const fetchKind = (kind: string) =>
+    $fetch<{ rows: IchibanSurchargeRow[]; reason?: string; upstreamStatus?: number }>(
+      '/api/surcharge-base',
+      { query: { from, to, kind, limit: 10000 } },
+    )
+  const [billing, transport, all] = await Promise.all([
+    fetchKind('billing_only'),
+    fetchKind('transport'),
+    fetchKind('all'),
+  ])
+  const dupGroups = (rows: IchibanSurchargeRow[]) => {
+    const seen = new Map<string, number>()
+    for (const r of rows) {
+      const k = JSON.stringify(r)
+      seen.set(k, (seen.get(k) ?? 0) + 1)
+    }
+    return [...seen.entries()]
+      .filter(([, n]) => n > 1)
+      .map(([k, n]) => ({ count: n, row: JSON.parse(k) as IchibanSurchargeRow }))
+  }
+  const dump = {
+    query: { from, to, date },
+    counts: {
+      billing_only: billing.rows.length,
+      transport: transport.rows.length,
+      all: all.rows.length,
+    },
+    exactDuplicateGroups: {
+      billing_only: dupGroups(billing.rows),
+      transport: dupGroups(transport.rows),
+      all: dupGroups(all.rows),
+    },
+    rows: { billing_only: billing.rows, transport: transport.rows, all: all.rows },
+  }
+  console.log('[ichiban debug]', dump)
+  shimebiMsg.value = `一番星 生データ取得: billing=${dump.counts.billing_only} / transport=${dump.counts.transport} / all=${dump.counts.all} 件 (重複 all=${dump.exactDuplicateGroups.all.length} 群)。JSON を download し console にも出力しました`
+  const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `ichibanboshi-raw-${date}.json`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 async function onRunShimebi() {
   const date = shimebiDate.value
   if (!date) {
@@ -1411,6 +1479,15 @@ watch(
               <option value="newtab">別タブ</option>
             </select>
           </label>
+          <button
+            v-if="isDebugUser"
+            class="btn btn-debug"
+            :disabled="shimebiState === 'loading'"
+            title="一番星 (rust-ichibanboshi) の surcharge/base 生データを取得し重複検出 + JSON download (debug)"
+            @click="onDebugIchiban"
+          >
+            🐞 一番星 生データ取得 (debug)
+          </button>
         </div>
         <p v-if="shimebiState === 'loading'" class="status">集計中…</p>
         <p v-else-if="shimebiState === 'error'" class="status err">{{ shimebiMsg }}</p>
@@ -1940,6 +2017,12 @@ nav {
   font-weight: 400;
   font-size: 0.72rem;
   color: #6b7280;
+}
+.btn-debug {
+  background: #6b7280;
+}
+.btn-debug:hover {
+  background: #4b5563;
 }
 .month-first td {
   border-top: 2px solid #d1d5db;
