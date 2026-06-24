@@ -771,6 +771,18 @@ async function onDebugIchiban() {
     rows: { billing_only: billing.rows, transport: transport.rows, all: all.rows },
   }
   console.log('[ichiban debug]', dump)
+  // 運転日報明細 のカラム一覧 (明細に追加する「車番」等の正確な DB カラム名 特定用)。
+  try {
+    const cols = await $fetch<{ columns?: { column_name: string; data_type: string }[] }>(
+      '/api/ichiban-columns',
+    )
+    console.log(
+      '[ichiban debug] 運転日報明細 columns:',
+      (cols.columns ?? []).map((c) => `${c.column_name}(${c.data_type})`).join(', '),
+    )
+  } catch (e) {
+    console.warn('[ichiban debug] columns 取得失敗', e)
+  }
   shimebiMsg.value = `一番星 生データ取得: billing=${dump.counts.billing_only} / transport=${dump.counts.transport} / all=${dump.counts.all} 件 (重複 all=${dump.exactDuplicateGroups.all.length} 群)。JSON を download し console にも出力しました`
   const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' })
   const a = document.createElement('a')
