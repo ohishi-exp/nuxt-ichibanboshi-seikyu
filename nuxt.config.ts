@@ -47,6 +47,11 @@ export default defineNuxtConfig({
     },
   },
 
+  // chunk load 失敗 (immutable キャッシュされた `/_nuxt/*.js` の 404) からの自動復旧。
+  // `experimental.emitRouteChunkError = 'manual'` と transpile 登録も module 側が行う
+  // ので consumer は 1 行で済む (Refs ippoan/auth-worker#452)。
+  modules: ['@ippoan/auth-client/module'],
+
   // lib は .vue/.ts をそのまま ship するので consumer 側で transpile する。
   build: {
     transpile: ['@ippoan/auth-client'],
