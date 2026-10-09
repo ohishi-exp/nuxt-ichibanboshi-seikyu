@@ -1,7 +1,7 @@
 import { requireAdmin } from '../utils/auth'
-import { resolveIchibanConfig } from '../utils/ichiban'
 
 // GET /api/vehicles — 一番星 (rust-ichibanboshi) の車種ﾏｽﾀを proxy する。
+// 上流は一番星 Worker (Service Binding ICHIBAN_DB)。Refs ohishi-exp/rust-ichibanboshi#322
 // 燃費マスタの新規登録フォームの車種ドロップダウン用。管理者限定。Refs #11 / rust-ichibanboshi#12
 //
 // 失敗 (連携未設定 / 接続失敗 / 上流非200) でも 200 + reason を返し、UI は車種C 手入力に
@@ -9,19 +9,17 @@ import { resolveIchibanConfig } from '../utils/ichiban'
 // client に echo せず log のみ。upstreamStatus (HTTP code) は診断のため返す。
 export default defineEventHandler(async (event) => {
   await requireAdmin(event)
-  const cfg = await resolveIchibanConfig(event)
-  if (!cfg) {
+  const binding = (event.context.cloudflare as { env?: { ICHIBAN_DB?: { fetch(r: Request): Promise<Response> } } } | undefined)?.env?.ICHIBAN_DB
+  if (!binding || typeof binding.fetch !== 'function') {
     return { vehicles: [], reason: 'not_configured' }
   }
 
   let res: Response
   try {
-    res = await fetch(`${cfg.base}/api/vehicles`, {
-      headers: {
-        'CF-Access-Client-Id': cfg.clientId,
-        'CF-Access-Client-Secret': cfg.clientSecret,
-      },
-    })
+    res = await binding.fetch(new Request('https://ichibanboshi-ichiban/api/vehicles', {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    }))
   } catch (e: unknown) {
     console.error('vehicles proxy: fetch threw', e instanceof Error ? e.message : e)
     return { vehicles: [], reason: 'connect_failed' }
