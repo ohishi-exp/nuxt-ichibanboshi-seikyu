@@ -27,17 +27,6 @@ custom_domain = true
 # worker は tenant_id を持たない。
 NUXT_PUBLIC_AUTH_WORKER_URL = "https://auth.ippoan.org"
 
-# 一番星 (rust-ichibanboshi) 連携 — surcharge-base・ichiban-columns (オンプレの
-# /api/surcharge/base・/api/schema/columns) を取得する。rust-ichiban.mtamaramu.com は
-# Cloudflare Access (Service Token) 保護なので CF-Access-Client-Id/Secret を付けて呼ぶ
-# (nuxt-ichibanboshi と同方式)。
-# service token `rust-ichibanboshi-ci-deploy` (824a8b3c) を使う。GCP に保管された
-# CF_ACCESS_CLIENT_ID/SECRET のペアがこのトークンで、rust-ichiban の CF Access app の
-# Service Auth 許可リストにも登録済 (nuxt-ichibanboshi も同トークンに寄せる)。
-# CF_ACCESS_CLIENT_ID は公開識別子なので plain var、secret は下の binding。
-ICHIBAN_API_BASE = "https://rust-ichiban.mtamaramu.com"
-CF_ACCESS_CLIENT_ID = "824a8b3c7042c7040924f38797a832f7.access"
-
 # 軽油価格 自動取込 cron 完了後の LINE WORKS bot 通知 (Refs #11 #2)。
 # bot_id / client_id / service_account / 送信先は識別子なので plain var、
 # client_secret と private_key (PKCS#8 PEM) は下の Secrets Store binding。
@@ -62,15 +51,6 @@ LINEWORKS_TARGET_ID = ""
 binding = "INTERNAL_SHARED_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "INTERNAL_SHARED_SECRET"
-
-# 一番星 CF Access service token (rust-ichibanboshi-ci-deploy / 824a8b3c) の client_secret。
-# GCP cloudsql-sv の同名 secret を SoT とし、CF Secrets Store へ sync 済
-# (secrets-inventory sync_from_gcp、secret_id 13965df3...)。secret-verify が GCP で検証する。
-# CF_ACCESS_CLIENT_ID (上の var) とペアになる値。
-[[secrets_store_secrets]]
-binding = "CF_ACCESS_CLIENT_SECRET"
-store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "CF_ACCESS_CLIENT_SECRET"
 
 # --- LINE WORKS bot 通知 (cron 完了通知、Refs #11 #2) ---
 # bot を provisioning し、GCP cloudsql-sv + CF Secrets Store に下記 2 secret を
