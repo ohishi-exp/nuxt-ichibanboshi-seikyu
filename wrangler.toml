@@ -96,7 +96,7 @@ database_name = "nuxt-ichibanboshi-seikyu"
 database_id = "d877b3b6-eb9d-4c41-b2b3-20ba1917aaaa"
 migrations_dir = "migrations"
 
-# 一番星 Worker (Service Binding 専用)。燃費マスタの車種ドロップダウン (GET /api/vehicles) の上流。
+# 一番星 Worker (Service Binding 専用)。燃費マスタの車種ドロップダウン (GET /api/vehicles)・燃料サーチャージ基礎 (GET /api/surcharge-base)・列一覧 (GET /api/ichiban-columns) の上流。
 # Refs ohishi-exp/rust-ichibanboshi#322
 [[services]]
 binding = "ICHIBAN_DB"
