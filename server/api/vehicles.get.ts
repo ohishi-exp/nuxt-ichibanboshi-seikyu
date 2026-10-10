@@ -1,4 +1,5 @@
 import { requireAdmin } from '../utils/auth'
+import { fetchIchiban } from '../utils/ichiban'
 
 // GET /api/vehicles — 一番星 (rust-ichibanboshi) の車種ﾏｽﾀを proxy する。
 // 上流は一番星 Worker (Service Binding ICHIBAN_DB)。Refs ohishi-exp/rust-ichibanboshi#322
@@ -9,17 +10,14 @@ import { requireAdmin } from '../utils/auth'
 // client に echo せず log のみ。upstreamStatus (HTTP code) は診断のため返す。
 export default defineEventHandler(async (event) => {
   await requireAdmin(event)
-  const binding = (event.context.cloudflare as { env?: { ICHIBAN_DB?: { fetch(r: Request): Promise<Response> } } } | undefined)?.env?.ICHIBAN_DB
-  if (!binding || typeof binding.fetch !== 'function') {
+  const pending = fetchIchiban(event, '/api/vehicles')
+  if (!pending) {
     return { vehicles: [], reason: 'not_configured' }
   }
 
   let res: Response
   try {
-    res = await binding.fetch(new Request('https://ichibanboshi-ichiban/api/vehicles', {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    }))
+    res = await pending
   } catch (e: unknown) {
     console.error('vehicles proxy: fetch threw', e instanceof Error ? e.message : e)
     return { vehicles: [], reason: 'connect_failed' }
